@@ -166,6 +166,9 @@ onMounted(() => {
                   {{ selectedSession.anchorName }} · 房间 {{ selectedSession.roomId }} ·
                   {{ formatDate(selectedSession.startedAt) }}
                   <template v-if="selectedSession.endedAt"> 至 {{ formatDate(selectedSession.endedAt) }}</template>
+                  <template v-if="selectedSession.filterUid">
+                    · 仅保存 {{ selectedSession.filterUserName || `UID ${selectedSession.filterUid}` }} 的弹幕
+                  </template>
                 </span>
               </div>
             </div>

@@ -92,7 +92,7 @@ export interface ApiResponse<T> {
   data: T
 }
 
-export type LocalCaptureTargetType = 'uid' | 'room'
+export type LocalCaptureTargetType = 'uid' | 'room' | 'user'
 export type LocalCaptureStatus = 'recording' | 'completed' | 'interrupted' | 'error'
 
 export interface LocalDanmakuRecord {
@@ -109,6 +109,8 @@ export interface LocalCaptureSession {
   id: string
   targetType: LocalCaptureTargetType
   targetValue: string
+  filterUid?: number
+  filterUserName?: string
   roomId: number
   anchorUid: number
   anchorName: string

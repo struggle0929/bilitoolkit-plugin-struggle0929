@@ -36,6 +36,7 @@ export const captureRootDir = ref('')
 let initialized = false
 let liveMessageClient: BiliLiveMessageClient | null = null
 let fileHandle: Awaited<ReturnType<typeof window.toolkitApi.file.open>> | null = null
+let activeFilterUid: number | undefined
 const pendingLines: string[] = []
 let writeChain = Promise.resolve()
 let persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -77,10 +78,13 @@ async function initializeCaptureStore() {
   if (captureSessions.value.some((session) => session.status === 'interrupted')) await persistIndex()
 }
 
-async function resolveTarget(targetType: LocalCaptureTargetType, targetValue: string) {
+async function resolveTarget(targetType: LocalCaptureTargetType, targetValue: string, filterUid?: number) {
   const numericValue = Number(normalizeId(targetValue))
   if (!Number.isSafeInteger(numericValue) || numericValue <= 0) {
-    throw new Error(targetType === 'uid' ? '请输入有效的 Bilibili UID' : '请输入有效的直播间号')
+    throw new Error(targetType === 'uid' ? '请输入有效的主播 UID' : '请输入有效的直播间号')
+  }
+  if (targetType === 'user' && (!filterUid || !Number.isSafeInteger(filterUid) || filterUid <= 0)) {
+    throw new Error('请输入有效的指定用户 UID')
   }
 
   let room: BiliLiveRoomInfo
@@ -111,9 +115,10 @@ async function resolveTarget(targetType: LocalCaptureTargetType, targetValue: st
     parentArea = room.parent_area_name || ''
   }
 
-  const [userCard, liveInfo] = await Promise.all([
+  const [userCard, liveInfo, filterCard] = await Promise.all([
     publicClient.user.getUserCard({ mid: anchorUid }),
     publicClient.live.getRoomInfo(anchorUid).catch(() => undefined),
+    filterUid ? publicClient.user.getUserCard({ mid: filterUid }).catch(() => undefined) : undefined,
   ])
   const card = userCard.card
   roomTitle = roomTitle || liveInfo?.title || ''
@@ -127,6 +132,8 @@ async function resolveTarget(targetType: LocalCaptureTargetType, targetValue: st
     cover,
     area,
     parentArea,
+    filterUid,
+    filterUserName: filterCard?.card.name,
   }
 }
 
@@ -152,6 +159,7 @@ function handleDanmakuMessage(message: DanmakuMessage) {
   const content = String(info[1] || '').trim()
   const sender = info[2]
   if (!content || !sender?.[0]) return
+  if (activeFilterUid !== undefined && Number(sender[0]) !== activeFilterUid) return
 
   const medal = info[3]
   const record: LocalDanmakuRecord = {
@@ -224,7 +232,11 @@ function createClient(roomId: number) {
   })
 }
 
-export async function startCapture(targetType: LocalCaptureTargetType, targetValue: string) {
+export async function startCapture(
+  targetType: LocalCaptureTargetType,
+  targetValue: string,
+  filterUid?: string,
+) {
   await initializeCaptureStore()
   if (activeSession.value) throw new Error('已经有一个采集任务正在运行，请先停止它')
   captureError.value = ''
@@ -233,12 +245,15 @@ export async function startCapture(targetType: LocalCaptureTargetType, targetVal
   captureState.value = 'resolving'
 
   try {
-    const target = await resolveTarget(targetType, targetValue)
+    const normalizedFilterUid = filterUid ? Number(normalizeId(filterUid)) : undefined
+    const target = await resolveTarget(targetType, targetValue, normalizedFilterUid)
     const id = `${Date.now()}-${target.roomId}`
     const session: LocalCaptureSession = {
       id,
       targetType,
       targetValue: normalizeId(targetValue),
+      filterUid: target.filterUid,
+      filterUserName: target.filterUserName,
       roomId: target.roomId,
       anchorUid: target.anchorUid,
       anchorName: target.anchorName,
@@ -253,6 +268,7 @@ export async function startCapture(targetType: LocalCaptureTargetType, targetVal
       status: 'recording',
     }
     fileHandle = await window.toolkitApi.file.open(session.filePath, 'a+')
+    activeFilterUid = target.filterUid
     activeSession.value = session
     captureSessions.value = [session, ...captureSessions.value]
     await persistIndex()
@@ -265,6 +281,7 @@ export async function startCapture(targetType: LocalCaptureTargetType, targetVal
       fileHandle = null
     }
     captureState.value = 'error'
+    activeFilterUid = undefined
     captureError.value = asError(error).message || '启动采集失败'
     if (activeSession.value) {
       activeSession.value = { ...activeSession.value, status: 'error', error: captureError.value, endedAt: Date.now() }
@@ -287,6 +304,7 @@ export async function stopCapture(status: LocalCaptureStatus = 'completed') {
     await fileHandle.close().catch(() => undefined)
     fileHandle = null
   }
+  activeFilterUid = undefined
   const session = activeSession.value
   session.status = status
   session.endedAt = Date.now()

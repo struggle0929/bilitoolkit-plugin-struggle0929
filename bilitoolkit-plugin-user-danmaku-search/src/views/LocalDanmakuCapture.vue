@@ -17,6 +17,7 @@ import type { LocalCaptureTargetType } from '@/types/danmaku'
 
 const targetType = ref<LocalCaptureTargetType>('uid')
 const targetValue = ref('')
+const targetFilterUid = ref('')
 const loading = ref(false)
 const keyword = ref('')
 
@@ -57,12 +58,16 @@ function showError(message: string) {
 
 async function begin() {
   if (!targetValue.value.trim()) {
-    showError(targetType.value === 'uid' ? '请输入 UID' : '请输入直播间号')
+    showError(targetType.value === 'uid' ? '请输入主播 UID' : '请输入直播间号')
+    return
+  }
+  if (targetType.value === 'user' && !targetFilterUid.value.trim()) {
+    showError('请输入要过滤的用户 UID')
     return
   }
   loading.value = true
   try {
-    await startCapture(targetType.value, targetValue.value)
+    await startCapture(targetType.value, targetValue.value, targetType.value === 'user' ? targetFilterUid.value : undefined)
     ElMessage.success('已开始采集，弹幕会持续保存到本地')
   } catch (error) {
     showError(error instanceof Error ? error.message : '启动采集失败')
@@ -107,15 +112,16 @@ onMounted(() => {
         <div class="control-title">
           <div>
             <h3>选择采集目标</h3>
-            <p>可以追踪 UID 当前对应的直播间，也可以直接输入房间号。</p>
+            <p>可以按主播 UID 找到直播间，也可以采集指定房间或只保存某位用户的发言。</p>
           </div>
           <el-tag v-if="activeSession" :type="captureState === 'error' ? 'danger' : 'success'" effect="dark">
             {{ stateLabel[captureState] }}
           </el-tag>
         </div>
         <el-radio-group v-model="targetType" :disabled="!!activeSession || loading">
-          <el-radio-button value="uid">按 UID 追踪</el-radio-button>
-          <el-radio-button value="room">按直播间采集</el-radio-button>
+          <el-radio-button value="uid">主播 UID 对应直播间</el-radio-button>
+          <el-radio-button value="room">直播间号采集</el-radio-button>
+          <el-radio-button value="user">指定用户弹幕过滤</el-radio-button>
         </el-radio-group>
         <div class="input-row">
           <el-input
@@ -126,7 +132,18 @@ onMounted(() => {
             :placeholder="targetType === 'uid' ? '输入主播 UID，例如 514536602' : '输入直播间号，例如 1931027476'"
             @keyup.enter="begin"
           >
-            <template #prepend>{{ targetType === 'uid' ? 'UID' : '房间号' }}</template>
+            <template #prepend>{{ targetType === 'uid' ? '主播 UID' : '房间号' }}</template>
+          </el-input>
+          <el-input
+            v-if="targetType === 'user'"
+            v-model="targetFilterUid"
+            :disabled="!!activeSession || loading"
+            inputmode="numeric"
+            clearable
+            placeholder="输入要过滤的用户 UID"
+            @keyup.enter="begin"
+          >
+            <template #prepend>用户 UID</template>
           </el-input>
           <el-button v-if="!activeSession" type="primary" :loading="loading" @click="begin">开始采集</el-button>
           <el-button v-else type="danger" :loading="loading" @click="stop">停止并保存</el-button>
@@ -145,7 +162,12 @@ onMounted(() => {
             <img v-if="activeSession.anchorFace" :src="activeSession.anchorFace" alt="主播头像" />
             <div>
               <strong>{{ activeSession.anchorName }}</strong>
-              <span>房间 {{ activeSession.roomId }} · {{ activeSession.title }}</span>
+              <span>
+                房间 {{ activeSession.roomId }} · {{ activeSession.title }}
+                <template v-if="activeSession.filterUid">
+                  · 仅保存 {{ activeSession.filterUserName || `UID ${activeSession.filterUid}` }} 的弹幕
+                </template>
+              </span>
             </div>
           </div>
           <div class="live-stats">
