@@ -78,10 +78,49 @@ export interface BiliLiveRoomInfo {
   uid: number
   room_id: number
   short_id: number
+  title?: string
+  user_cover?: string
+  keyframe?: string
+  live_status?: number
+  area_name?: string
+  parent_area_name?: string
 }
 
 export interface ApiResponse<T> {
   code: number
   message: string
   data: T
+}
+
+export type LocalCaptureTargetType = 'uid' | 'room'
+export type LocalCaptureStatus = 'recording' | 'completed' | 'interrupted' | 'error'
+
+export interface LocalDanmakuRecord {
+  ts: number
+  uid: number
+  uname: string
+  content: string
+  color: number
+  medalName?: string
+  medalLevel?: number
+}
+
+export interface LocalCaptureSession {
+  id: string
+  targetType: LocalCaptureTargetType
+  targetValue: string
+  roomId: number
+  anchorUid: number
+  anchorName: string
+  anchorFace: string
+  title: string
+  cover: string
+  area?: string
+  parentArea?: string
+  startedAt: number
+  endedAt?: number
+  messageCount: number
+  filePath: string
+  status: LocalCaptureStatus
+  error?: string
 }

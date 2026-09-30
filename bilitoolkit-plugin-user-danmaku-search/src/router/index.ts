@@ -7,6 +7,18 @@ export const appMenus: Array<RouteRecordRaw & { title: string }> = [
     name: 'UserDanmakuSearch',
     component: () => import('../views/UserDanmakuSearch.vue'),
   },
+  {
+    title: '本地弹幕采集',
+    path: '/LocalDanmakuCapture',
+    name: 'LocalDanmakuCapture',
+    component: () => import('../views/LocalDanmakuCapture.vue'),
+  },
+  {
+    title: '本地弹幕记录',
+    path: '/LocalDanmakuHistory',
+    name: 'LocalDanmakuHistory',
+    component: () => import('../views/LocalDanmakuHistory.vue'),
+  },
 ]
 
 export const router = createRouter({
