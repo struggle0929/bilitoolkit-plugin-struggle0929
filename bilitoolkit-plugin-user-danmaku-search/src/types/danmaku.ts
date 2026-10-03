@@ -1,5 +1,6 @@
 export interface QueryHistoryItem {
   uid: string
+  mode?: 'user' | 'room'
   name: string
   queriedAt: number
 }
@@ -52,12 +53,19 @@ export interface DanmakuSession {
     watchCount: number
     likeCount: number
     interactionCount: number
+    isFull?: boolean
+    isFinish?: boolean
   }
   danmakus: {
     actors: DanmakuActor[]
     roomEmojis: RoomEmoji[]
     records: DanmakuRecord[]
   }
+}
+
+export interface RoomChannelData {
+  channel: DanmakuSession['channel']
+  lives: Array<DanmakuSession['live'] & { coverUrl?: string }>
 }
 
 export interface HistoryPage {

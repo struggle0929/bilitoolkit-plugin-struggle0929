@@ -1,9 +1,18 @@
-import type { ApiResponse, BiliLiveRoomInfo, BootstrapData, HistoryPage } from '@/types/danmaku'
+import { decode } from '@msgpack/msgpack'
+import type {
+  ApiResponse,
+  BiliLiveRoomInfo,
+  BootstrapData,
+  HistoryPage,
+  RoomChannelData,
+  DanmakuSession,
+} from '@/types/danmaku'
+import { decodeLiveSession } from './live-decoder'
 
 const API_BASE = 'https://api.ukamnads.icu/api/v3'
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+async function request<T>(path: string, signal?: AbortSignal, base = API_BASE): Promise<T> {
+  const response = await fetch(`${base}${path}`, {
     signal,
     headers: { Accept: 'application/json' },
   })
@@ -12,6 +21,23 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   const body = (await response.json()) as ApiResponse<T>
   if (body.code !== 200) throw new Error(body.message || `查询失败（代码 ${body.code}）`)
   return body.data
+}
+
+export function fetchRoomChannel(ownerUid: string, signal?: AbortSignal) {
+  return request<RoomChannelData>(
+    `/channel?uId=${encodeURIComponent(ownerUid)}`,
+    signal,
+    'https://api.ukamnads.icu/api/v2',
+  )
+}
+
+export async function fetchLiveSession(liveId: string, signal?: AbortSignal): Promise<DanmakuSession> {
+  const response = await fetch(`${API_BASE}/lives/${encodeURIComponent(liveId)}/full?includeEnter=false`, {
+    signal,
+    headers: { Accept: 'application/x-msgpack' },
+  })
+  if (!response.ok) throw new Error(`场次弹幕接口返回 HTTP ${response.status}`)
+  return decodeLiveSession(decode(new Uint8Array(await response.arrayBuffer())))
 }
 
 export function fetchBootstrap(uid: string, pageSize: number, signal?: AbortSignal) {

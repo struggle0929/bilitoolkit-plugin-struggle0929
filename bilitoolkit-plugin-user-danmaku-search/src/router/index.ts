@@ -2,7 +2,7 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-rou
 
 export const appMenus: Array<RouteRecordRaw & { title: string }> = [
   {
-    title: '用户弹幕查询',
+    title: '直播弹幕查询',
     path: '/UserDanmakuSearch',
     name: 'UserDanmakuSearch',
     component: () => import('../views/UserDanmakuSearch.vue'),

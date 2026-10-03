@@ -6,7 +6,7 @@
 
 | 插件名称 | npm | 描述 |
 | --- | --- | --- |
-| [用户弹幕查询](./bilitoolkit-plugin-user-danmaku-search) | [bilitoolkit-plugin-user-danmaku-search](https://www.npmjs.com/package/bilitoolkit-plugin-user-danmaku-search) | 根据 UID 查询第三方服务已经公开收录的直播弹幕记录，并保存本地查询历史。 |
+| [直播弹幕查询](./bilitoolkit-plugin-user-danmaku-search) | [bilitoolkit-plugin-user-danmaku-search](https://www.npmjs.com/package/bilitoolkit-plugin-user-danmaku-search) | 按房间号查询直播间已收录弹幕，或按 UID 查询用户弹幕，保存本地查询历史。 |
 | [批量视频去水印](./bilitoolkit-plugin-video-watermark-remover) | [bilitoolkit-plugin-video-watermark-remover](https://www.npmjs.com/package/bilitoolkit-plugin-video-watermark-remover) | 批量处理本地视频，通过框选固定区域及精细蒙版去除水印。 |
 
 ## 开发与发布

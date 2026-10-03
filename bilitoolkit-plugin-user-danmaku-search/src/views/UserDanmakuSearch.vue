@@ -1,20 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { PluginPageContent, showToast } from 'bilitoolkit-ui'
-import { fetchBootstrap, fetchHistory, resolveRoomOwner } from '@/services/danmakus-api'
-import type { DanmakuRecord, DanmakuSession, QueryHistoryItem, WatchedChannel } from '@/types/danmaku'
+import {
+  fetchBootstrap,
+  fetchHistory,
+  resolveRoomOwner,
+  fetchRoomChannel,
+  fetchLiveSession,
+} from '@/services/danmakus-api'
+import type { DanmakuRecord, DanmakuSession, QueryHistoryItem, WatchedChannel, RoomChannelData } from '@/types/danmaku'
 
 const HISTORY_DB_KEY = 'query-history'
 const SETTINGS_DB_KEY = 'search-settings'
 const HISTORY_LIMIT = 20
 
 const uid = ref('')
+const queryMode = ref<'user' | 'room'>('user')
+const activeMode = ref<'user' | 'room'>('user')
+const activeUid = ref('')
+const roomData = ref<RoomChannelData>()
+const busy = computed(() => loading.value || loadingMore.value || loadingFilter.value)
+const maxPageSize = computed(() => (queryMode.value === 'room' ? 10 : 100))
+const loadingSession = ref(0)
+const visibleRecordLimits = ref<Record<string, number>>({})
 const loading = ref(false)
 const loadingMore = ref(false)
 const loadingFilter = ref(false)
 const searched = ref(false)
 const page = ref(1)
 const pageSize = ref(10)
+const loadedPageSize = ref(10)
 const total = ref(0)
 const hasMore = ref(false)
 const sessions = ref<DanmakuSession[]>([])
@@ -69,7 +84,35 @@ function formatDate(timestamp: number) {
 }
 
 function actorName(session: DanmakuSession, record: DanmakuRecord) {
-  return session.danmakus.actors[record.actorId]?.name || uid.value
+  return session.danmakus.actors[record.actorId]?.name || (record.actorId < 0 ? '系统' : `UID ${activeUid.value}`)
+}
+
+function switchMode() {
+  uid.value = ''
+  searched.value = false
+  sessions.value = []
+  pageSize.value = queryMode.value === 'room' ? 1 : 10
+}
+
+function visibleRecords(session: DanmakuSession) {
+  return session.danmakus.records.slice(0, visibleRecordLimits.value[session.live.liveId] || 200)
+}
+
+async function fetchRoomPage(targetPage: number, signal?: AbortSignal) {
+  if (!roomData.value) throw new Error('请先查询直播间')
+  const lives = roomData.value.lives.slice((targetPage - 1) * pageSize.value, targetPage * pageSize.value)
+  const items: DanmakuSession[] = []
+  for (const live of lives) {
+    loadingSession.value = items.length + 1
+    const session = await fetchLiveSession(live.liveId, signal)
+    session.channel.faceUrl = roomData.value.channel.faceUrl
+    items.push(session)
+  }
+  return {
+    items,
+    total: roomData.value.lives.length,
+    hasMore: targetPage * pageSize.value < roomData.value.lives.length,
+  }
 }
 
 function recordContent(session: DanmakuSession, record: DanmakuRecord) {
@@ -82,29 +125,67 @@ function recordContent(session: DanmakuSession, record: DanmakuRecord) {
 }
 
 async function saveHistory(name: string) {
-  const item: QueryHistoryItem = { uid: uid.value, name: name || `UID ${uid.value}`, queriedAt: Date.now() }
-  queryHistory.value = [item, ...queryHistory.value.filter((entry) => entry.uid !== item.uid)].slice(0, HISTORY_LIMIT)
+  const item: QueryHistoryItem = {
+    uid: activeUid.value,
+    mode: activeMode.value,
+    name: name || `${activeMode.value === 'room' ? '房间' : 'UID'} ${activeUid.value}`,
+    queriedAt: Date.now(),
+  }
+  queryHistory.value = [
+    item,
+    ...queryHistory.value.filter((entry) => entry.uid !== item.uid || (entry.mode || 'user') !== item.mode),
+  ].slice(0, HISTORY_LIMIT)
   await window.toolkitApi.db.write(HISTORY_DB_KEY, { items: queryHistory.value })
 }
 
-async function search(targetUid = uid.value) {
+async function search(targetUid = uid.value, mode = queryMode.value) {
+  if (busy.value) return
   const normalized = normalizeUid(targetUid)
   if (!normalized) {
-    showToast('请输入有效的 UID')
+    showToast(`请输入有效的${mode === 'room' ? '房间号' : ' UID'}`)
     return
   }
 
   uid.value = normalized
+  if (queryMode.value !== mode) pageSize.value = mode === 'room' ? 1 : 10
+  queryMode.value = mode
+  activeMode.value = mode
+  activeUid.value = normalized
   abortController?.abort()
   abortController = new AbortController()
   loading.value = true
   searched.value = false
+  sessions.value = []
+  watchedChannels.value = []
+  visibleRecordLimits.value = {}
+  channelFilter.value = ''
+  keywordFilter.value = ''
+  activeChannelUserId.value = ''
+  activeChannelLabel.value = ''
   try {
+    if (mode === 'room') {
+      const room = await resolveRoomOwner(normalized, abortController.signal)
+      roomData.value = await fetchRoomChannel(String(room.uid), abortController.signal)
+      roomData.value.lives = [...new Map(roomData.value.lives.map((live) => [live.liveId, live])).values()].sort(
+        (a, b) => b.startDate - a.startDate,
+      )
+      const data = await fetchRoomPage(1, abortController.signal)
+      sessions.value = data.items
+      total.value = data.total
+      hasMore.value = data.hasMore
+      page.value = 1
+      loadedPageSize.value = pageSize.value
+      activeChannelLabel.value = `${roomData.value.channel.uName}（房间 ${room.room_id}）`
+      searched.value = true
+      await saveHistory(roomData.value.channel.uName)
+      return
+    }
     const data = await fetchBootstrap(normalized, pageSize.value, abortController.signal)
     sessions.value = data.history.items || []
     watchedChannels.value = data.watchedChannels || []
     total.value = data.history.total || 0
     page.value = 1
+    loadedPageSize.value = pageSize.value
     hasMore.value = data.history.hasMore
     channelFilter.value = ''
     keywordFilter.value = ''
@@ -123,47 +204,76 @@ async function search(targetUid = uid.value) {
 }
 
 async function loadMore() {
-  if (!hasMore.value || loadingMore.value || loadingFilter.value) return
+  if (!hasMore.value || busy.value) return
+  abortController = new AbortController()
   loadingMore.value = true
   try {
     const nextPage = page.value + 1
-    const data = await fetchHistory(uid.value, nextPage, pageSize.value, activeChannelUserId.value || undefined)
+    const data =
+      activeMode.value === 'room'
+        ? await fetchRoomPage(nextPage, abortController.signal)
+        : await fetchHistory(
+            activeUid.value,
+            nextPage,
+            pageSize.value,
+            activeChannelUserId.value || undefined,
+            abortController.signal,
+          )
     sessions.value.push(...(data.items || []))
     page.value = nextPage
     hasMore.value = data.hasMore
   } catch (error) {
-    showToast((error as Error).message || '加载失败，请稍后重试')
+    if ((error as Error).name !== 'AbortError') showToast((error as Error).message || '加载失败，请稍后重试')
   } finally {
     loadingMore.value = false
   }
 }
 
-async function reloadFirstPage(channelUserId = activeChannelUserId.value, channelLabel = activeChannelLabel.value) {
-  const data = await fetchHistory(uid.value, 1, pageSize.value, channelUserId || undefined)
+async function reloadFirstPage(
+  channelUserId = activeChannelUserId.value,
+  channelLabel = activeChannelLabel.value,
+  signal?: AbortSignal,
+) {
+  if (!signal) {
+    abortController = new AbortController()
+    signal = abortController.signal
+  }
+  const data =
+    activeMode.value === 'room'
+      ? await fetchRoomPage(1, signal)
+      : await fetchHistory(activeUid.value, 1, pageSize.value, channelUserId || undefined, signal)
   sessions.value = data.items || []
   total.value = data.total || 0
   page.value = 1
+  loadedPageSize.value = pageSize.value
   hasMore.value = data.hasMore
   activeChannelUserId.value = channelUserId
   activeChannelLabel.value = channelLabel
+  visibleRecordLimits.value = {}
 }
 
 async function changePageSize(value?: number) {
-  pageSize.value = Math.min(100, Math.max(1, Number(value) || 10))
-  await window.toolkitApi.db.write(SETTINGS_DB_KEY, { pageSize: pageSize.value })
-  if (!searched.value) return
+  pageSize.value = Math.min(maxPageSize.value, Math.max(1, Number(value) || 1))
+  if (!searched.value) {
+    await window.toolkitApi.db.write(SETTINGS_DB_KEY, { pageSize: pageSize.value })
+    return
+  }
 
   loadingFilter.value = true
   try {
     await reloadFirstPage()
+    await window.toolkitApi.db.write(SETTINGS_DB_KEY, { pageSize: pageSize.value })
   } catch (error) {
-    showToast((error as Error).message || '调整加载数量失败')
+    pageSize.value = loadedPageSize.value
+    if ((error as Error).name !== 'AbortError') showToast((error as Error).message || '调整加载数量失败')
   } finally {
     loadingFilter.value = false
   }
 }
 
 async function applyChannelFilter() {
+  if (busy.value) return
+  abortController = new AbortController()
   const value = channelFilter.value.trim()
   loadingFilter.value = true
   try {
@@ -171,7 +281,7 @@ async function applyChannelFilter() {
     let channelLabel = ''
 
     if (/^\d+$/.test(value)) {
-      const room = await resolveRoomOwner(value)
+      const room = await resolveRoomOwner(value, abortController.signal)
       channelUserId = String(room.uid)
       const channel = watchedChannels.value.find((item) => String(item.uId) === channelUserId)
       channelLabel = channel ? `${channel.uName}（房间 ${room.room_id}）` : `房间 ${room.room_id}`
@@ -186,9 +296,9 @@ async function applyChannelFilter() {
       channelLabel = channel.uName
     }
 
-    await reloadFirstPage(channelUserId, channelLabel)
+    await reloadFirstPage(channelUserId, channelLabel, abortController.signal)
   } catch (error) {
-    showToast((error as Error).message || '直播间筛选失败')
+    if ((error as Error).name !== 'AbortError') showToast((error as Error).message || '直播间筛选失败')
   } finally {
     loadingFilter.value = false
   }
@@ -197,11 +307,13 @@ async function applyChannelFilter() {
 function clearFilters() {
   channelFilter.value = ''
   keywordFilter.value = ''
-  void applyChannelFilter()
+  if (activeMode.value === 'user') void applyChannelFilter()
 }
 
-async function removeHistory(historyUid: string) {
-  queryHistory.value = queryHistory.value.filter((item) => item.uid !== historyUid)
+async function removeHistory(entry: QueryHistoryItem) {
+  queryHistory.value = queryHistory.value.filter(
+    (item) => item.uid !== entry.uid || (item.mode || 'user') !== (entry.mode || 'user'),
+  )
   await window.toolkitApi.db.write(HISTORY_DB_KEY, { items: queryHistory.value })
 }
 
@@ -218,6 +330,8 @@ onMounted(async () => {
   queryHistory.value = storedHistory.items || []
   pageSize.value = Math.min(100, Math.max(1, Number(storedSettings.pageSize) || 10))
 })
+
+onUnmounted(() => abortController?.abort())
 </script>
 
 <template>
@@ -225,25 +339,33 @@ onMounted(async () => {
     <div class="page">
       <section class="search-card">
         <div>
-          <h2>用户弹幕查询</h2>
-          <p>输入 Bilibili UID，查询第三方服务已经收录的直播弹幕记录。</p>
+          <h2>直播弹幕查询</h2>
+          <p>选择房间号查询直播间已收录弹幕，或输入 UID 查询该用户的直播弹幕。</p>
         </div>
+        <el-radio-group v-model="queryMode" :disabled="busy" @change="switchMode">
+          <el-radio-button value="room">按房间号</el-radio-button>
+          <el-radio-button value="user">按用户 UID</el-radio-button>
+        </el-radio-group>
         <div class="search-row">
           <el-input
             v-model="uid"
+            :disabled="busy"
             inputmode="numeric"
             clearable
-            placeholder="请输入目标 UID"
+            :placeholder="queryMode === 'room' ? '请输入直播间房间号（支持短号）' : '请输入目标 UID'"
             @input="uid = normalizeUid(uid)"
             @keyup.enter="search()"
           >
-            <template #prepend>UID</template>
+            <template #prepend>{{ queryMode === 'room' ? '房间号' : 'UID' }}</template>
           </el-input>
-          <el-button type="primary" :loading="loading" @click="search()">查询</el-button>
-          <el-button v-if="loading" @click="abortController?.abort()">取消</el-button>
+          <el-button type="primary" :loading="loading" :disabled="loadingMore || loadingFilter" @click="search()"
+            >查询</el-button
+          >
+          <el-button v-if="busy" @click="abortController?.abort()">取消</el-button>
         </div>
+        <p v-if="busy && activeMode === 'room'">正在读取本批第 {{ loadingSession }} 场弹幕…</p>
         <el-alert
-          title="数据由 Danmakus 第三方服务提供，查询结果取决于其收录范围和服务状态。"
+          title="只查询 Danmakus 已收录的数据，不保证覆盖直播间全部历史弹幕；按场次分页加载，不进行本地实时采集。"
           type="info"
           :closable="false"
           show-icon
@@ -258,14 +380,14 @@ onMounted(async () => {
         <div class="history-list">
           <el-tag
             v-for="item in queryHistory"
-            :key="item.uid"
+            :key="`${item.mode || 'user'}-${item.uid}`"
             closable
             size="large"
             class="history-tag"
-            @click="search(item.uid)"
-            @close.stop="removeHistory(item.uid)"
+            @click="search(item.uid, item.mode || 'user')"
+            @close.stop="removeHistory(item)"
           >
-            {{ item.name }} · {{ item.uid }}
+            {{ item.name }} · {{ item.mode === 'room' ? '房间' : 'UID' }} {{ item.uid }}
           </el-tag>
         </div>
       </section>
@@ -281,8 +403,9 @@ onMounted(async () => {
             <el-input-number
               v-model="pageSize"
               :min="1"
-              :max="100"
-              :step="10"
+              :max="maxPageSize"
+              :step="queryMode === 'room' ? 1 : 10"
+              :disabled="busy"
               controls-position="right"
               @change="changePageSize"
             />
@@ -300,8 +423,9 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="filter-bar">
+        <div class="filter-bar" :style="activeMode === 'room' ? { gridTemplateColumns: '1fr' } : {}">
           <el-input
+            v-if="activeMode === 'user'"
             v-model.trim="channelFilter"
             clearable
             placeholder="直播间房间号或主播名称"
@@ -310,7 +434,13 @@ onMounted(async () => {
           >
             <template #prepend>直播间</template>
           </el-input>
-          <el-button :loading="loadingFilter" @click="applyChannelFilter">筛选直播间</el-button>
+          <el-button
+            v-if="activeMode === 'user'"
+            :loading="loadingFilter"
+            :disabled="loadingMore"
+            @click="applyChannelFilter"
+            >筛选直播间</el-button
+          >
           <el-input v-model.trim="keywordFilter" clearable placeholder="例如：如果">
             <template #prepend>弹幕内容</template>
           </el-input>
@@ -335,15 +465,29 @@ onMounted(async () => {
                   {{ session.channel.uName }} · 房间 {{ session.channel.roomId }} ·
                   {{ formatDate(session.live.startDate) }}
                 </div>
+                <div v-if="activeMode === 'room'" class="meta">
+                  {{ session.live.isFull ? '该场标记为完整收录' : '该场仅部分收录' }} ·
+                  {{ session.live.isFinish ? '场次已结束' : '未结束场次，结果为查询时的收录快照' }}
+                </div>
               </div>
               <el-tag effect="plain">{{ session.live.parentArea }} / {{ session.live.area }}</el-tag>
             </div>
             <div class="records">
-              <div v-for="(record, index) in session.danmakus.records" :key="`${record.ts}-${index}`" class="record">
+              <div v-for="(record, index) in visibleRecords(session)" :key="`${record.ts}-${index}`" class="record">
                 <span class="time">{{ formatDate(record.ts).slice(11) }}</span>
                 <span class="actor">{{ actorName(session, record) }}</span>
                 <span class="content">{{ recordContent(session, record) }}</span>
               </div>
+              <el-button
+                v-if="visibleRecords(session).length < session.danmakus.records.length"
+                link
+                type="primary"
+                @click="
+                  visibleRecordLimits[session.live.liveId] = (visibleRecordLimits[session.live.liveId] || 200) + 200
+                "
+              >
+                显示更多弹幕（已显示 {{ visibleRecords(session).length }} / {{ session.danmakus.records.length }} 条）
+              </el-button>
             </div>
           </div>
         </article>
