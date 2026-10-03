@@ -1,0 +1,77 @@
+{
+  "name": "bilitoolkit-plugin-video-watermark-remover",
+  "version": "0.1.2",
+  "private": false,
+  "type": "module",
+  "main": "index.html",
+  "productName": "Video Watermark Remover",
+  "productCNName": "批量视频去水印",
+  "description": "选择本地视频、框选固定水印区域并使用 FFmpeg 精细蒙版批量去除水印",
+  "author": "struggle0929",
+  "keywords": [
+    "BiliToolkit",
+    "哔哩工具姬",
+    "bilitoolkit-plugin",
+    "bilitoolkit-plugin:name:批量视频去水印",
+    "bilitoolkit-plugin:type:ui"
+  ],
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/struggle0929/bilitoolkit-plugin-struggle0929.git",
+    "directory": "bilitoolkit-plugin-video-watermark-remover"
+  },
+  "bugs": {
+    "url": "https://github.com/struggle0929/bilitoolkit-plugin-struggle0929/issues"
+  },
+  "homepage": "https://github.com/struggle0929/bilitoolkit-plugin-struggle0929/tree/main/bilitoolkit-plugin-video-watermark-remover#readme",
+  "scripts": {
+    "check": "vue-tsc --build --noEmit && eslint .",
+    "lint": "eslint . --fix",
+    "format": "prettier --write src/",
+    "dev": "rimraf node_modules/.vite && chcp 65001 && vite",
+    "dev(cache)": "chcp 65001 && vite",
+    "build": "vite build",
+    "npm login": "npm login",
+    "pnpm publish": "pnpm publish --access public"
+  },
+  "dependencies": {
+    "@vueuse/core": "^13.9.0",
+    "@ybgnb/bili-api": "^1.0.2",
+    "@ybgnb/utils": "^1.0.0",
+    "bilitoolkit-runtime": "^1.0.0",
+    "bilitoolkit-types": "^1.0.2",
+    "bilitoolkit-ui": "^1.0.1",
+    "element-plus": "^2.13.7",
+    "lodash-es": "^4.17.21",
+    "pinia": "^3.0.3",
+    "pinia-plugin-persistedstate": "^4.5.0",
+    "vue": "^3.5.34",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.2",
+    "@types/http-proxy": "^1.17.17",
+    "@types/node": "^22.16.5",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.6.0",
+    "@ybgnb/vite-env": "^1.0.0",
+    "eslint": "^9.31.0",
+    "eslint-plugin-vue": "~10.3.0",
+    "http-proxy": "^1.18.1",
+    "jiti": "^2.4.2",
+    "prettier": "3.6.2",
+    "rimraf": "^6.0.1",
+    "sass": "^1.92.1",
+    "typescript": "^5.9.3",
+    "unplugin-auto-import": "^21.0.0",
+    "unplugin-vue-components": "^32.0.0",
+    "vite": "^7.3.3",
+    "vite-plugin-vue-devtools": "^8.1.2",
+    "vue-tsc": "^3.0.4"
+  }
+}
