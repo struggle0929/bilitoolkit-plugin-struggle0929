@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { PluginPageContent, showToast } from 'bilitoolkit-ui'
 import { fetchBootstrap, fetchHistory, resolveRoomOwner } from '@/services/danmakus-api'
 import type { DanmakuRecord, DanmakuSession, QueryHistoryItem, WatchedChannel } from '@/types/danmaku'
@@ -26,15 +25,6 @@ const keywordFilter = ref('')
 const activeChannelUserId = ref('')
 const activeChannelLabel = ref('')
 let abortController: AbortController | undefined
-
-function showQueryError(message: string) {
-  ElMessage({
-    message,
-    type: 'error',
-    duration: 0,
-    showClose: true,
-  })
-}
 
 const recordCount = computed(() =>
   sessions.value.reduce((count, session) => count + session.danmakus.records.length, 0),
@@ -126,7 +116,7 @@ async function search(targetUid = uid.value) {
       .find((actor) => String(actor.uid) === normalized)?.name
     await saveHistory(userName || data.historyUserNames?.[0] || '')
   } catch (error) {
-    if ((error as Error).name !== 'AbortError') showQueryError((error as Error).message || '查询失败，请稍后重试')
+    if ((error as Error).name !== 'AbortError') showToast((error as Error).message || '查询失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -142,7 +132,7 @@ async function loadMore() {
     page.value = nextPage
     hasMore.value = data.hasMore
   } catch (error) {
-    showQueryError((error as Error).message || '加载失败，请稍后重试')
+    showToast((error as Error).message || '加载失败，请稍后重试')
   } finally {
     loadingMore.value = false
   }
@@ -167,7 +157,7 @@ async function changePageSize(value?: number) {
   try {
     await reloadFirstPage()
   } catch (error) {
-    showQueryError((error as Error).message || '调整加载数量失败')
+    showToast((error as Error).message || '调整加载数量失败')
   } finally {
     loadingFilter.value = false
   }
@@ -198,7 +188,7 @@ async function applyChannelFilter() {
 
     await reloadFirstPage(channelUserId, channelLabel)
   } catch (error) {
-    showQueryError((error as Error).message || '直播间筛选失败')
+    showToast((error as Error).message || '直播间筛选失败')
   } finally {
     loadingFilter.value = false
   }

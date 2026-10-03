@@ -17,9 +17,6 @@ importers:
       '@ybgnb/utils':
         specifier: ^1.0.0
         version: 1.0.2
-      bili-live-message-core:
-        specifier: ^1.0.0
-        version: 1.0.0(@ybgnb/bili-api@1.0.2)(brotli-wasm@3.0.1)(fflate@0.8.3)
       bilitoolkit-runtime:
         specifier: ^1.0.0
         version: 1.0.0(@ybgnb/bili-api@1.0.2)(bilitoolkit-types@1.0.2(@ybgnb/bili-api@1.0.2)(@ybgnb/utils@1.0.2))(lodash-es@4.18.1)(vue@3.5.43(typescript@5.9.3))
@@ -29,15 +26,9 @@ importers:
       bilitoolkit-ui:
         specifier: ^1.0.1
         version: 1.0.1(@vue/language-core@3.3.11)(@vueuse/core@13.9.0(vue@3.5.43(typescript@5.9.3)))(@ybgnb/bili-api@1.0.2)(@ybgnb/utils@1.0.2)(bilitoolkit-runtime@1.0.0(@ybgnb/bili-api@1.0.2)(bilitoolkit-types@1.0.2(@ybgnb/bili-api@1.0.2)(@ybgnb/utils@1.0.2))(lodash-es@4.18.1)(vue@3.5.43(typescript@5.9.3)))(bilitoolkit-types@1.0.2(@ybgnb/bili-api@1.0.2)(@ybgnb/utils@1.0.2))(element-plus@2.14.7(vue@3.5.43(typescript@5.9.3)))(lodash-es@4.18.1)(pinia@3.0.4(typescript@5.9.3)(vue@3.5.43(typescript@5.9.3)))(vue@3.5.43(typescript@5.9.3))
-      brotli-wasm:
-        specifier: ^3.0.1
-        version: 3.0.1
       element-plus:
         specifier: ^2.13.7
         version: 2.14.7(vue@3.5.43(typescript@5.9.3))
-      fflate:
-        specifier: ^0.8.3
-        version: 0.8.3
       lodash-es:
         specifier: ^4.17.21
         version: 4.18.1
@@ -853,14 +844,6 @@ packages:
   bignumber.js@9.3.1:
     resolution: {integrity: sha512-Ko0uX15oIUS7wJ3Rb30Fs6SkVbLmPBAKdlm7q9+ak9bbIeFf0MwuBsQV6z7+X768/cHsfg+WlysDWJcmthjsjQ==}
 
-  bili-live-message-core@1.0.0:
-    resolution: {integrity: sha512-fqevZkiuOs1T7XbE/m6zyavJApOekmrB5oC9CWDUNb9iAuPK/aRcGX+sz0noLen4NkRylmsSkNo6FBUXQAhKWQ==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    peerDependencies:
-      '@ybgnb/bili-api': ^1.0.0
-      brotli-wasm: ^3.0.1
-      fflate: ^0.8.3
-
   bilitoolkit-runtime@1.0.0:
     resolution: {integrity: sha512-SAiEz8LZ71kqGQ9xRG+hsaJpT+F4EjYnQdFFoA8EtUyuub6C3CP3iqLWXk+DPEww9uuEgQhjMV6L+4In1E+GDQ==}
     peerDependencies:
@@ -909,10 +892,6 @@ packages:
   braces@3.0.3:
     resolution: {integrity: sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==}
     engines: {node: '>=8'}
-
-  brotli-wasm@3.0.1:
-    resolution: {integrity: sha512-U3K72/JAi3jITpdhZBqzSUq+DUY697tLxOuFXB+FpAE/Ug+5C3VZrv4uA674EUZHxNAuQ9wETXNqQkxZD6oL4A==}
-    engines: {node: '>=v18.0.0'}
 
   callsites@3.1.0:
     resolution: {integrity: sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ==}
@@ -1131,9 +1110,6 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
-
-  fflate@0.8.3:
-    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
 
   file-entry-cache@8.0.0:
     resolution: {integrity: sha512-XXTUwCvisa5oacNGRP9SfNtYBNAMi+RPwBFmblZEF7N7swHYQS6/Zfk7SRwx4D5j3CH211YNRco1DEMNVfZCnQ==}
@@ -2353,13 +2329,6 @@ snapshots:
 
   bignumber.js@9.3.1: {}
 
-  bili-live-message-core@1.0.0(@ybgnb/bili-api@1.0.2)(brotli-wasm@3.0.1)(fflate@0.8.3):
-    dependencies:
-      '@ybgnb/bili-api': 1.0.2
-      '@ybgnb/utils': 1.0.2
-      brotli-wasm: 3.0.1
-      fflate: 0.8.3
-
   bilitoolkit-runtime@1.0.0(@ybgnb/bili-api@1.0.2)(bilitoolkit-types@1.0.2(@ybgnb/bili-api@1.0.2)(@ybgnb/utils@1.0.2))(lodash-es@4.18.1)(vue@3.5.43(typescript@5.9.3)):
     dependencies:
       '@ybgnb/bili-api': 1.0.2
@@ -2406,8 +2375,6 @@ snapshots:
   braces@3.0.3:
     dependencies:
       fill-range: 7.1.1
-
-  brotli-wasm@3.0.1: {}
 
   callsites@3.1.0: {}
 
@@ -2665,8 +2632,6 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
-
-  fflate@0.8.3: {}
 
   file-entry-cache@8.0.0:
     dependencies:

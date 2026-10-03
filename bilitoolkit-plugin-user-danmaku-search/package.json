@@ -1,6 +1,6 @@
 {
   "name": "bilitoolkit-plugin-user-danmaku-search",
-  "version": "0.1.0",
+  "version": "0.0.3",
   "private": false,
   "type": "module",
   "main": "index.html",
@@ -11,7 +11,6 @@
     "哔哩工具姬",
     "bilitoolkit-plugin",
     "bilitoolkit-plugin:name:用户弹幕查询",
-    "bilitoolkit-plugin:name:本地弹幕采集",
     "bilitoolkit-plugin:type:ui"
   ],
   "files": [
@@ -43,13 +42,10 @@
     "@vueuse/core": "^13.9.0",
     "@ybgnb/bili-api": "^1.0.2",
     "@ybgnb/utils": "^1.0.0",
-    "bili-live-message-core": "^1.0.0",
     "bilitoolkit-runtime": "^1.0.0",
     "bilitoolkit-types": "^1.0.1",
     "bilitoolkit-ui": "^1.0.1",
-    "brotli-wasm": "^3.0.1",
     "element-plus": "^2.13.7",
-    "fflate": "^0.8.3",
     "lodash-es": "^4.17.21",
     "pinia": "^3.0.3",
     "vue": "^3.5.34",
