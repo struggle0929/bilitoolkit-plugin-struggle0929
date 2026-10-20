@@ -1,0 +1,72 @@
+{
+  "name": "bilitoolkit-plugin-live-consumption",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "main": "index.html",
+  "description": "登录本人账号查询直播消费账单，汇总电池支出、退款、主播与礼物分布，支持本地缓存和导出",
+  "author": "struggle0929",
+  "keywords": [
+    "BiliToolkit",
+    "哔哩工具姬",
+    "bilitoolkit-plugin",
+    "bilitoolkit-plugin:name:直播消费账单",
+    "bilitoolkit-plugin:type:ui"
+  ],
+  "files": [
+    "dist",
+    "!dist/bundle-stats.*"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/struggle0929/bilitoolkit-plugin-struggle0929.git",
+    "directory": "bilitoolkit-plugin-live-consumption"
+  },
+  "bugs": {
+    "url": "https://github.com/struggle0929/bilitoolkit-plugin-struggle0929/issues"
+  },
+  "homepage": "https://github.com/struggle0929/bilitoolkit-plugin-struggle0929/tree/main/bilitoolkit-plugin-live-consumption#readme",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "删除缓存": "rimraf node_modules/.vite",
+    "check": "vue-tsc --build --noEmit && eslint .",
+    "lint": "eslint . --fix",
+    "format": "prettier --write src/",
+    "dev": "rimraf node_modules/.vite && chcp 65001 && vite",
+    "dev(cache)": "chcp 65001 && vite",
+    "build": "vite build",
+    "npm login": "npm login",
+    "pnpm publish": "pnpm publish --access public"
+  },
+  "dependencies": {
+    "@vueuse/core": "^13.9.0",
+    "@ybgnb/bili-api": "^1.0.2",
+    "@ybgnb/utils": "^1.0.0",
+    "bilitoolkit-runtime": "^1.0.0",
+    "bilitoolkit-types": "^1.0.1",
+    "bilitoolkit-ui": "^1.0.1",
+    "element-plus": "^2.13.7",
+    "lodash-es": "^4.17.21",
+    "pinia": "^3.0.3",
+    "vue": "^3.5.34"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^22.16.5",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.6.0",
+    "eslint": "^9.31.0",
+    "eslint-plugin-vue": "~10.3.0",
+    "jiti": "^2.4.2",
+    "prettier": "3.6.2",
+    "rimraf": "^6.0.1",
+    "sass": "^1.92.1",
+    "typescript": "^5.9.3",
+    "unplugin-auto-import": "^20.1.0",
+    "unplugin-vue-components": "^29.0.0",
+    "vite": "^7.3.3",
+    "vue-tsc": "^3.0.4"
+  }
+}
