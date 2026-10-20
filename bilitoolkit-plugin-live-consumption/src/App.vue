@@ -457,6 +457,8 @@ onBeforeUnmount(() => {
   --line: var(--el-border-color-lighter, #e9ebf2);
   --accent: var(--el-color-primary, #7366d8);
   box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
   max-width: 1440px;
   margin: 0 auto;
   padding: 28px;
