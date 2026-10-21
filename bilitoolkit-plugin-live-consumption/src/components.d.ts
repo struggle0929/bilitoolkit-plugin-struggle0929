@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AnchorQueries: typeof import('./components/AnchorQueries.vue')['default']
+    ExtendedQueries: typeof import('./components/ExtendedQueries.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

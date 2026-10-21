@@ -75,7 +75,7 @@ test('first account selection initializes a missing cache rather than reading an
   const module = `
     const calls=[];
     const switching={value:false},error={value:''},notice={value:''},account={value:null},snapshot={value:null},page={value:1};
-    const cancel=()=>{},dbKey=uid=>'live-consumption-'+uid;
+    const cancel=()=>{},resetFilters=()=>{},dbKey=uid=>'live-consumption-'+uid;
     const window={toolkitApi:{user:{switchUser:async()=>({mid:123,name:'测试用户',face:''})},db:{
       read:async()=>{throw Error('文档不存在')},
       init:async key=>{calls.push(key);return null}

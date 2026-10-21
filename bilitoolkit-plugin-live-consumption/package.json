@@ -1,10 +1,10 @@
 {
   "name": "bilitoolkit-plugin-live-consumption",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "main": "index.html",
-  "description": "登录本人账号查询直播消费账单，汇总电池支出、退款、主播与礼物分布，支持本地缓存和导出",
+  "description": "本人直播消费、盲盒开奖记录、合成与奖励分析、包裹及主播收礼查询，支持筛选和本地导出",
   "author": "struggle0929",
   "keywords": [
     "BiliToolkit",

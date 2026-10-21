@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { CollectionSnapshot } from './types/consumption'
 import { collectConsumption } from './services/consumption-api'
 import { recordsToCsv, summarizeRecords } from './services/consumption-core'
+import ExtendedQueries from './components/ExtendedQueries.vue'
 
 type Account = { uid: string; name: string; face: string }
 const account = ref<Account | null>(null)
@@ -16,6 +17,13 @@ const keyword = ref('')
 const startDate = ref('')
 const endDate = ref('')
 const viewMode = ref('all')
+const anchorSearch = ref('')
+const selectedAnchorId = ref('')
+const selectedGiftKey = ref('')
+const anchorSelect = ref<HTMLSelectElement | null>(null)
+const chartMetric = ref<'battery' | 'quantity' | 'count'>('battery')
+const mainPage = ref<'consumption' | 'extended'>('consumption')
+const extendedBusy = ref(false)
 const page = ref(1)
 const hostAvailable = typeof window.toolkitApi !== 'undefined'
 let activeController: AbortController | null = null
@@ -27,11 +35,32 @@ const dateText = (value: number | null) =>
 const timeText = (value: number) =>
   new Date(value * 1000).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
 const allRecords = computed(() => snapshot.value?.records || [])
+const giftKey = (id: string, name: string) => JSON.stringify([id, name])
+const allAnchors = computed(() => {
+  const anchors = new Map<string, string>()
+  for (const record of allRecords.value) {
+    if (record.anchorId && !anchors.has(record.anchorId)) anchors.set(record.anchorId, record.anchorName)
+  }
+  return [...anchors].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+})
+const anchorOptions = computed(() => {
+  const query = anchorSearch.value.trim().toLowerCase()
+  return allAnchors.value.filter(
+    (anchor) =>
+      anchor.id === selectedAnchorId.value || !query || `${anchor.name} ${anchor.id}`.toLowerCase().includes(query),
+  )
+})
+const selectedAnchor = computed(() => allAnchors.value.find((anchor) => anchor.id === selectedAnchorId.value))
+const selectedGift = computed(() =>
+  allRecords.value.find((record) => giftKey(record.giftId, record.giftName) === selectedGiftKey.value),
+)
 const filteredRecords = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   const start = startDate.value ? new Date(startDate.value + 'T00:00:00+08:00').getTime() / 1000 : -Infinity
   const end = endDate.value ? new Date(endDate.value + 'T23:59:59+08:00').getTime() / 1000 : Infinity
   return allRecords.value.filter((record) => {
+    if (selectedAnchorId.value && record.anchorId !== selectedAnchorId.value) return false
+    if (selectedGiftKey.value && giftKey(record.giftId, record.giftName) !== selectedGiftKey.value) return false
     if (record.timestamp < start || record.timestamp > end) return false
     if (viewMode.value === 'paid' && record.netBattery <= 0) return false
     if (viewMode.value === 'bag' && !record.isBag) return false
@@ -42,13 +71,64 @@ const filteredRecords = computed(() => {
   })
 })
 const summary = computed(() => summarizeRecords(filteredRecords.value))
-const newest = computed(() => allRecords.value[0])
+const filteredGiftCount = computed(
+  () => new Set(filteredRecords.value.map((record) => giftKey(record.giftId, record.giftName))).size,
+)
+const filteredAnchorCount = computed(
+  () => new Set(filteredRecords.value.map((record) => record.anchorId).filter(Boolean)).size,
+)
+const newest = computed(() => filteredRecords.value[0])
 const rows = computed(() => filteredRecords.value.slice((page.value - 1) * 50, page.value * 50))
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredRecords.value.length / 50)))
-const monthMax = computed(() => Math.max(1, ...summary.value.months.map((item) => item.battery)))
+const metricLabel = computed(
+  () => ({ battery: '净支出电池', quantity: '礼物数量', count: '记录条数' })[chartMetric.value],
+)
+const metricUnit = computed(() => ({ battery: '电池', quantity: '个', count: '条' })[chartMetric.value])
+const chartData = computed(() => {
+  const months = new Map<string, { key: string; value: number }>()
+  const anchors = new Map<string, { id: string; name: string; value: number }>()
+  const gifts = new Map<
+    string,
+    { key: string; id: string; name: string; image: string; value: number; quantity: number; count: number }
+  >()
+  const monthFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit' })
+  for (const record of filteredRecords.value) {
+    const value =
+      chartMetric.value === 'battery' ? record.netBattery : chartMetric.value === 'quantity' ? record.giftNum : 1
+    if (value <= 0) continue
+    const monthKey = monthFormat.format(new Date(record.timestamp * 1000))
+    const month = months.get(monthKey) ?? { key: monthKey, value: 0 }
+    month.value += value
+    months.set(monthKey, month)
+    const anchorKey = record.anchorId || 'unknown'
+    const anchor = anchors.get(anchorKey) ?? { id: anchorKey, name: record.anchorName, value: 0 }
+    anchor.value += value
+    anchors.set(anchorKey, anchor)
+    const key = giftKey(record.giftId, record.giftName)
+    const gift = gifts.get(key) ?? {
+      key,
+      id: record.giftId,
+      name: record.giftName,
+      image: record.giftImg,
+      value: 0,
+      quantity: 0,
+      count: 0,
+    }
+    gift.value += value
+    gift.quantity += record.giftNum
+    gift.count++
+    gifts.set(key, gift)
+  }
+  return {
+    months: [...months.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    anchors: [...anchors.values()].sort((a, b) => b.value - a.value),
+    gifts: [...gifts.values()].sort((a, b) => b.value - a.value),
+  }
+})
+const monthMax = computed(() => Math.max(1, ...chartData.value.months.map((item) => item.value)))
 const colors = ['#6d64df', '#36a69c', '#efb260', '#5d9bd5', '#d67eb4', '#83b96f', '#d87972', '#99a1b3']
 const anchorGroups = computed(() => {
-  const anchors = summary.value.anchors.filter((item) => item.battery > 0)
+  const anchors = chartData.value.anchors
   const top = anchors.slice(0, 7)
   const rest = anchors.slice(7)
   return rest.length
@@ -57,23 +137,52 @@ const anchorGroups = computed(() => {
         {
           id: 'others',
           name: '其他主播',
-          battery: rest.reduce((n, row) => n + row.battery, 0),
-          count: rest.reduce((n, row) => n + row.count, 0),
+          value: rest.reduce((n, row) => n + row.value, 0),
         },
       ]
     : top
 })
 const pieStyle = computed(() => {
-  const total = anchorGroups.value.reduce((n, row) => n + row.battery, 0)
+  const total = anchorGroups.value.reduce((n, row) => n + row.value, 0)
   let offset = 0
   const stops = anchorGroups.value.map((row, i) => {
     const from = offset
-    offset += total ? (row.battery / total) * 100 : 0
+    offset += total ? (row.value / total) * 100 : 0
     return colors[i] + ' ' + from + '% ' + offset + '%'
   })
   return { background: stops.length ? 'conic-gradient(' + stops.join(',') + ')' : 'var(--line)' }
 })
 function changedFilter() {
+  page.value = 1
+}
+watch([keyword, startDate, endDate, viewMode, selectedAnchorId, selectedGiftKey], changedFilter)
+watch(viewMode, (mode) => {
+  if (mode === 'bag' && chartMetric.value === 'battery') chartMetric.value = 'quantity'
+})
+function selectAnchor(id: string) {
+  if (id === 'others' || id === 'unknown') {
+    anchorSearch.value = ''
+    anchorSelect.value?.focus()
+    anchorSelect.value?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return
+  }
+  selectedAnchorId.value = id
+}
+function selectMonth(key: string) {
+  const [year, month] = key.split('-').map(Number)
+  if (!year || !month) return
+  startDate.value = key + '-01'
+  endDate.value = key + '-' + new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+function resetFilters() {
+  keyword.value = ''
+  startDate.value = ''
+  endDate.value = ''
+  viewMode.value = 'all'
+  anchorSearch.value = ''
+  selectedAnchorId.value = ''
+  selectedGiftKey.value = ''
+  chartMetric.value = 'battery'
   page.value = 1
 }
 function cancel() {
@@ -99,7 +208,7 @@ async function selectAccount() {
     const chosen = { uid: String(selected.mid), name: selected.name, face: selected.face }
     account.value = chosen
     snapshot.value = null
-    page.value = 1
+    resetFilters()
     const cached = await window.toolkitApi.db.init<CollectionSnapshot>(dbKey(chosen.uid))
     if (account.value?.uid !== chosen.uid) return
     if (cached && cached.formatVersion === 1 && cached.uid === chosen.uid && Array.isArray(cached.records)) {
@@ -171,6 +280,8 @@ async function exportData(format: 'csv' | 'json') {
                 endDate: endDate.value,
                 keyword: keyword.value,
                 viewMode: viewMode.value,
+                anchorId: selectedAnchorId.value,
+                giftKey: selectedGiftKey.value,
               },
             },
             null,
@@ -239,213 +350,294 @@ onBeforeUnmount(() => {
         <h1>直播消费账单</h1>
         <p>把每一次支持，整理成看得清的记录。</p>
       </div>
-      <button class="account-button" :disabled="!hostAvailable || switching" @click="selectAccount">
+      <button
+        class="account-button"
+        :disabled="!hostAvailable || switching || busy || extendedBusy"
+        @click="selectAccount"
+      >
         <img v-if="account?.face" :src="account.face" alt="" /><span>{{
           switching ? '正在验证账号…' : account ? account.name + ' · 切换账号' : '选择并授权账号'
         }}</span>
       </button>
     </header>
+    <nav class="page-navigation" aria-label="账单查询页面">
+      <button :aria-pressed="mainPage === 'consumption'" :disabled="extendedBusy" @click="mainPage = 'consumption'">
+        消费账单
+      </button>
+      <button :aria-pressed="mainPage === 'extended'" :disabled="busy" @click="mainPage = 'extended'">
+        盲盒与更多查询
+      </button>
+    </nav>
     <div v-if="!hostAvailable" class="message warning">
       请在哔哩工具姬中加载本插件，使用宿主的账号管理完成登录和授权。
     </div>
     <div v-if="error" class="message error" role="alert">{{ error }}</div>
     <div v-if="notice" class="message" role="status">{{ notice }}</div>
-    <section class="query-panel panel">
-      <div>
-        <strong>{{ account ? 'UID ' + account.uid : '从选择本人账号开始' }}</strong>
-        <p>直接读取 B 站本人直播消费记录，查询过程中可随时停止。</p>
-      </div>
-      <div class="query-actions">
-        <button :disabled="!account || busy || switching" @click="query('incremental')">
-          {{ snapshot ? '更新最新记录' : '查询消费记录' }}</button
-        ><button :disabled="!account || busy || switching" class="secondary" @click="query('full')">
-          重新获取全部记录</button
-        ><button v-if="busy" class="secondary" @click="cancel">停止查询</button>
-      </div>
-      <div v-if="busy" class="progress" role="status">
-        <span class="pulse" />正在查询第 {{ progress.pages + 1 }} 页，已取得 {{ fmt(progress.records) }} 条记录…
-      </div>
-    </section>
-    <template v-if="snapshot">
-      <div class="coverage-line">
-        <span>已查到的记录范围：{{ dateText(summary.earliest) }} — {{ dateText(summary.latest) }}</span
-        ><span :class="['coverage', snapshot.coverage]">{{
-          snapshot.coverage === 'complete' ? '已遍历接口返回的全部页' : '部分记录，尚未查询完整'
-        }}</span>
-      </div>
-      <div v-if="snapshot.warning" class="message warning">{{ snapshot.warning }}</div>
-      <section class="stats-grid">
-        <article class="stat lavender">
-          <span>净支出电池</span><strong>{{ fmt(summary.netBattery) }}</strong
-          ><small>扣除已识别退款，不计包裹道具</small>
-        </article>
-        <article class="stat peach">
-          <span>付费消费次数</span><strong>{{ fmt(summary.consumptionCount) }}</strong
-          ><small>按消费记录计数</small>
-        </article>
-        <article class="stat mint">
-          <span>礼物种类</span><strong>{{ fmt(summary.giftTypeCount) }}</strong
-          ><small>当前筛选范围</small>
-        </article>
-        <article class="stat rose">
-          <span>支持主播数</span><strong>{{ fmt(summary.anchorCount) }}</strong
-          ><small>按主播 UID 去重</small>
-        </article>
-      </section>
-      <section class="last-record panel">
+    <ExtendedQueries
+      v-if="mainPage === 'extended'"
+      :account="account"
+      :records="allRecords"
+      @select-account="selectAccount"
+      @busy="extendedBusy = $event"
+    />
+    <div v-show="mainPage === 'consumption'">
+      <section class="query-panel panel">
         <div>
-          <span class="muted">最新记录 · 验证是否更新</span>
-          <div v-if="newest" class="latest">
-            <strong>{{ newest.giftName }} × {{ newest.giftNum }}</strong
-            ><span>{{ newest.anchorName }}</span
-            ><time>{{ timeText(newest.timestamp) }}</time>
-          </div>
-          <p v-else>接口暂未返回消费记录。</p>
+          <strong>{{ account ? 'UID ' + account.uid : '从选择本人账号开始' }}</strong>
+          <p>直接读取 B 站本人直播消费记录，查询过程中可随时停止。</p>
         </div>
-        <div class="refund-info">
-          <span>支出 {{ fmt(summary.paidBattery) }} 电池</span
-          ><span>已识别退款 {{ fmt(summary.refundBattery) }} 电池</span>
+        <div class="query-actions">
+          <button :disabled="!account || busy || switching" @click="query('incremental')">
+            {{ snapshot ? '更新最新记录' : '查询消费记录' }}</button
+          ><button :disabled="!account || busy || switching" class="secondary" @click="query('full')">
+            重新获取全部记录</button
+          ><button v-if="busy" class="secondary" @click="cancel">停止查询</button>
+        </div>
+        <div v-if="busy" class="progress" role="status">
+          <span class="pulse" />正在查询第 {{ progress.pages + 1 }} 页，已取得 {{ fmt(progress.records) }} 条记录…
         </div>
       </section>
-      <section class="filter-panel panel">
-        <label>开始日期<input v-model="startDate" type="date" @change="changedFilter" /></label
-        ><label>结束日期<input v-model="endDate" type="date" @change="changedFilter" /></label>
-        <label class="keyword"
-          >搜索<input v-model="keyword" placeholder="主播、UID、礼物或记录 ID" @input="changedFilter"
-        /></label>
-        <label
-          >记录类型<select v-model="viewMode" @change="changedFilter">
-            <option value="all">全部记录</option>
-            <option value="paid">有净支出</option>
-            <option value="bag">包裹道具</option>
-            <option value="refunded">退款记录</option>
-          </select></label
-        >
-      </section>
-      <section class="charts-grid">
-        <article class="panel chart-panel">
-          <div class="section-title">
-            <h2>日期统计</h2>
-            <span>月度净支出 · 电池</span>
-          </div>
-          <div v-if="summary.months.length" class="month-chart">
-            <div
-              v-for="month in summary.months"
-              :key="month.key"
-              class="month-column"
-              :title="month.key + '：' + fmt(month.battery) + ' 电池'"
-            >
-              <span>{{ fmt(month.battery) }}</span>
-              <div class="bar-track">
-                <div class="bar" :style="{ height: Math.max(1, (month.battery / monthMax) * 100) + '%' }" />
-              </div>
-              <small>{{ month.key }}</small>
-            </div>
-          </div>
-          <div v-else class="empty">当前范围暂无付费消费</div>
-        </article>
-        <article class="panel chart-panel">
-          <div class="section-title">
-            <h2>主播分布</h2>
-            <span>按净支出排序</span>
-          </div>
-          <div v-if="anchorGroups.length" class="anchor-chart">
-            <div class="donut" :style="pieStyle">
-              <div>
-                <strong>{{ fmt(summary.anchorCount) }}</strong
-                ><span>位主播</span>
-              </div>
-            </div>
-            <ul class="legend">
-              <li v-for="(anchor, index) in anchorGroups" :key="anchor.id">
-                <i :style="{ background: colors[index] }" /><span :title="anchor.name">{{ anchor.name }}</span
-                ><strong>{{ fmt(anchor.battery) }}</strong>
-              </li>
-            </ul>
-          </div>
-          <div v-else class="empty">当前范围暂无付费消费</div>
-        </article>
-      </section>
-      <section class="panel table-panel">
-        <div class="section-title">
+      <template v-if="snapshot">
+        <div class="coverage-line">
+          <span>已查到的记录范围：{{ dateText(summary.earliest) }} — {{ dateText(summary.latest) }}</span
+          ><span :class="['coverage', snapshot.coverage]">{{
+            snapshot.coverage === 'complete' ? '已遍历接口返回的全部页' : '部分记录，尚未查询完整'
+          }}</span>
+        </div>
+        <div v-if="snapshot.warning" class="message warning">{{ snapshot.warning }}</div>
+        <section class="stats-grid">
+          <article class="stat lavender">
+            <span>净支出电池</span><strong>{{ fmt(summary.netBattery) }}</strong
+            ><small>扣除已识别退款，不计包裹道具</small>
+          </article>
+          <article class="stat peach">
+            <span>付费消费次数</span><strong>{{ fmt(summary.consumptionCount) }}</strong
+            ><small>按消费记录计数</small>
+          </article>
+          <article class="stat mint">
+            <span>礼物种类</span><strong>{{ fmt(filteredGiftCount) }}</strong
+            ><small>当前筛选范围</small>
+          </article>
+          <article class="stat rose">
+            <span>支持主播数</span><strong>{{ fmt(filteredAnchorCount) }}</strong
+            ><small>按主播 UID 去重</small>
+          </article>
+        </section>
+        <section class="last-record panel">
           <div>
-            <h2>消费明细</h2>
-            <p>共 {{ fmt(filteredRecords.length) }} 条 · 所有金额单位均为电池</p>
+            <span class="muted">当前筛选最新记录</span>
+            <div v-if="newest" class="latest">
+              <strong>{{ newest.giftName }} × {{ newest.giftNum }}</strong
+              ><span>{{ newest.anchorName }}</span
+              ><time>{{ timeText(newest.timestamp) }}</time>
+            </div>
+            <p v-else>当前筛选没有消费记录。</p>
           </div>
-          <div class="export-actions">
-            <button class="secondary" :disabled="!filteredRecords.length" @click="exportData('csv')">导出 CSV</button
-            ><button class="secondary" :disabled="!filteredRecords.length" @click="exportData('json')">
-              导出 JSON
+          <div class="refund-info">
+            <span>支出 {{ fmt(summary.paidBattery) }} 电池</span
+            ><span>已识别退款 {{ fmt(summary.refundBattery) }} 电池</span>
+          </div>
+        </section>
+        <section class="filter-panel panel">
+          <label>开始日期<input v-model="startDate" type="date" @change="changedFilter" /></label
+          ><label>结束日期<input v-model="endDate" type="date" @change="changedFilter" /></label>
+          <label class="keyword"
+            >搜索<input v-model="keyword" placeholder="主播、UID、礼物或记录 ID" @input="changedFilter"
+          /></label>
+          <label
+            >记录类型<select v-model="viewMode" @change="changedFilter">
+              <option value="all">全部记录</option>
+              <option value="paid">有净支出</option>
+              <option value="bag">包裹道具</option>
+              <option value="refunded">退款记录</option>
+            </select></label
+          >
+          <label class="anchor-filter"
+            >选择主播<input v-model="anchorSearch" placeholder="搜索主播名或 UID" />
+            <select ref="anchorSelect" v-model="selectedAnchorId" aria-label="选择主播">
+              <option value="">全部主播（{{ allAnchors.length }} 位）</option>
+              <option v-for="anchor in anchorOptions" :key="anchor.id" :value="anchor.id">
+                {{ anchor.name }} · {{ anchor.id }}
+              </option>
+            </select>
+          </label>
+          <button class="secondary" @click="resetFilters">清除筛选</button>
+        </section>
+        <div v-if="selectedAnchor || selectedGift" class="active-filters">
+          <button v-if="selectedAnchor" class="filter-chip" @click="selectedAnchorId = ''">
+            主播：{{ selectedAnchor.name }} · UID {{ selectedAnchor.id }} ×
+          </button>
+          <button v-if="selectedGift" class="filter-chip" @click="selectedGiftKey = ''">
+            礼物：{{ selectedGift.giftName }} ×
+          </button>
+        </div>
+        <div class="chart-controls">
+          <label
+            >图表统计口径
+            <select v-model="chartMetric">
+              <option value="battery">净支出电池</option>
+              <option value="quantity">礼物数量</option>
+              <option value="count">记录条数</option>
+            </select>
+          </label>
+          <span class="muted">点击月份、主播或礼物可筛选明细；包裹道具可按数量查看，不计入支出。</span>
+        </div>
+        <section class="charts-grid">
+          <article class="panel chart-panel">
+            <div class="section-title">
+              <h2>日期统计</h2>
+              <span>月度{{ metricLabel }} · {{ metricUnit }}</span>
+            </div>
+            <div v-if="chartData.months.length" class="month-chart">
+              <button
+                v-for="month in chartData.months"
+                :key="month.key"
+                class="month-column"
+                :title="month.key + '：' + fmt(month.value) + ' ' + metricUnit + '，点击筛选此月'"
+                @click="selectMonth(month.key)"
+              >
+                <span>{{ fmt(month.value) }}</span>
+                <div class="bar-track">
+                  <div class="bar" :style="{ height: Math.max(1, (month.value / monthMax) * 100) + '%' }" />
+                </div>
+                <small>{{ month.key }}</small>
+              </button>
+            </div>
+            <div v-else class="empty">当前范围暂无{{ metricLabel }}数据</div>
+          </article>
+          <article class="panel chart-panel">
+            <div class="section-title">
+              <h2>主播分布</h2>
+              <span>按{{ metricLabel }}排序 · 可点击筛选</span>
+            </div>
+            <div v-if="anchorGroups.length" class="anchor-chart">
+              <div class="donut" :style="pieStyle">
+                <div>
+                  <strong>{{ fmt(chartData.anchors.length) }}</strong
+                  ><span>位主播</span>
+                </div>
+              </div>
+              <ul class="legend">
+                <li v-for="(anchor, index) in anchorGroups" :key="anchor.id">
+                  <button
+                    class="legend-button"
+                    :aria-pressed="selectedAnchorId === anchor.id"
+                    :title="anchor.id === 'others' ? '从完整主播列表选择' : '筛选 UID ' + anchor.id"
+                    @click="selectAnchor(anchor.id)"
+                  >
+                    <i :style="{ background: colors[index] }" /><span>{{ anchor.name }}</span
+                    ><strong>{{ fmt(anchor.value) }}</strong>
+                  </button>
+                </li>
+              </ul>
+            </div>
+            <div v-else class="empty">当前范围暂无{{ metricLabel }}数据</div>
+          </article>
+        </section>
+        <section class="panel gift-panel">
+          <div class="section-title">
+            <h2>礼物清单</h2>
+            <span>按{{ metricLabel }}排序 · 点击礼物筛选</span>
+          </div>
+          <div v-if="chartData.gifts.length" class="gift-grid">
+            <button
+              v-for="gift in chartData.gifts"
+              :key="gift.key"
+              class="gift-summary"
+              :aria-pressed="selectedGiftKey === gift.key"
+              @click="selectedGiftKey = gift.key"
+            >
+              <img v-if="gift.image" :src="gift.image" alt="" loading="lazy" />
+              <span
+                ><strong>{{ gift.name }}</strong
+                ><small>{{ fmt(gift.quantity) }} 个 · {{ fmt(gift.count) }} 条记录</small></span
+              >
+              <b>{{ fmt(gift.value) }} {{ metricUnit }}</b>
             </button>
           </div>
-        </div>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>消费时间</th>
-                <th>礼物 / 数量</th>
-                <th>主播</th>
-                <th class="numeric">净支出</th>
-                <th class="numeric">退款</th>
-                <th>类型 / 状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="record in rows" :key="record.id">
-                <td class="nowrap">{{ timeText(record.timestamp) }}</td>
-                <td>
-                  <span class="gift-name"
-                    ><img v-if="record.giftImg" :src="record.giftImg" alt="" loading="lazy" /><span
-                      >{{ record.giftName }} × {{ record.giftNum }}</span
-                    ></span
-                  >
-                </td>
-                <td>
-                  <span>{{ record.anchorName }}</span
-                  ><small class="uid">UID {{ record.anchorId }}</small>
-                </td>
-                <td class="numeric">{{ fmt(record.netBattery) }}</td>
-                <td class="numeric">{{ fmt(record.refundBattery) }}</td>
-                <td>
-                  <span :class="['record-tag', { refund: record.isRefunded || record.refundBattery > 0 }]">{{
-                    record.isBag
-                      ? '包裹道具'
-                      : record.isRefunded
-                        ? '已退回'
-                        : record.refundBattery > 0
-                          ? '含退款'
-                          : '付费道具'
-                  }}</span>
-                </td>
-              </tr>
-              <tr v-if="!rows.length">
-                <td colspan="6" class="empty">当前条件下没有消费记录。</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination">
-          <button class="secondary" :disabled="page <= 1" @click="page--">上一页</button
-          ><span>{{ page }} / {{ totalPages }}</span
-          ><button class="secondary" :disabled="page >= totalPages" @click="page++">下一页</button>
-        </div>
+          <div v-else class="empty">当前范围暂无{{ metricLabel }}数据</div>
+        </section>
+        <section class="panel table-panel">
+          <div class="section-title">
+            <div>
+              <h2>消费明细</h2>
+              <p>共 {{ fmt(filteredRecords.length) }} 条 · 所有金额单位均为电池</p>
+            </div>
+            <div class="export-actions">
+              <button class="secondary" :disabled="!filteredRecords.length" @click="exportData('csv')">导出 CSV</button
+              ><button class="secondary" :disabled="!filteredRecords.length" @click="exportData('json')">
+                导出 JSON
+              </button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>消费时间</th>
+                  <th>礼物 / 数量</th>
+                  <th>主播</th>
+                  <th class="numeric">净支出</th>
+                  <th class="numeric">退款</th>
+                  <th>类型 / 状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="record in rows" :key="record.id">
+                  <td class="nowrap">{{ timeText(record.timestamp) }}</td>
+                  <td>
+                    <span class="gift-name"
+                      ><img v-if="record.giftImg" :src="record.giftImg" alt="" loading="lazy" /><span
+                        >{{ record.giftName }} × {{ record.giftNum }}</span
+                      ></span
+                    >
+                  </td>
+                  <td>
+                    <button class="anchor-link" @click="selectAnchor(record.anchorId)">{{ record.anchorName }}</button
+                    ><small class="uid">UID {{ record.anchorId }}</small>
+                  </td>
+                  <td class="numeric">{{ fmt(record.netBattery) }}</td>
+                  <td class="numeric">{{ fmt(record.refundBattery) }}</td>
+                  <td>
+                    <span :class="['record-tag', { refund: record.isRefunded || record.refundBattery > 0 }]">{{
+                      record.isBag
+                        ? '包裹道具'
+                        : record.isRefunded
+                          ? '已退回'
+                          : record.refundBattery > 0
+                            ? '含退款'
+                            : '付费道具'
+                    }}</span>
+                  </td>
+                </tr>
+                <tr v-if="!rows.length">
+                  <td colspan="6" class="empty">当前条件下没有消费记录。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button class="secondary" :disabled="page <= 1" @click="page--">上一页</button
+            ><span>{{ page }} / {{ totalPages }}</span
+            ><button class="secondary" :disabled="page >= totalPages" @click="page++">下一页</button>
+          </div>
+        </section>
+        <footer class="scope-note">
+          数据更新时间：{{
+            new Date(snapshot.updatedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
+          }}。<br />“全部页”指 B
+          站接口本次可返回的范围，不代表账号注册至今的完整账单。充值、站外支付、大会员和其他业务不包含在此统计中；电池支出不直接等同人民币实付金额。
+        </footer>
+      </template>
+      <section v-else class="panel welcome">
+        <div class="welcome-mark">▥</div>
+        <h2>你的直播消费，一目了然</h2>
+        <p>
+          选择并授权本人账号后，查询付费礼物、退款和包裹道具记录。<br />统计按电池展示，账单缓存与导出文件保存在本机。
+        </p>
+        <div class="welcome-steps"><span>01 选择账号</span><span>02 查询账单</span><span>03 筛选与导出</span></div>
       </section>
-      <footer class="scope-note">
-        数据更新时间：{{
-          new Date(snapshot.updatedAt).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
-        }}。<br />“全部页”指 B
-        站接口本次可返回的范围，不代表账号注册至今的完整账单。充值、站外支付、大会员和其他业务不包含在此统计中；电池支出不直接等同人民币实付金额。
-      </footer>
-    </template>
-    <section v-else class="panel welcome">
-      <div class="welcome-mark">▥</div>
-      <h2>你的直播消费，一目了然</h2>
-      <p>
-        选择并授权本人账号后，查询付费礼物、退款和包裹道具记录。<br />统计按电池展示，账单缓存与导出文件保存在本机。
-      </p>
-      <div class="welcome-steps"><span>01 选择账号</span><span>02 查询账单</span><span>03 筛选与导出</span></div>
-    </section>
+    </div>
   </main>
 </template>
 
@@ -519,6 +711,26 @@ button {
 }
 button:hover {
   opacity: 0.85;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.page-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 20px;
+}
+.page-navigation button {
+  color: var(--muted);
+  background: var(--surface);
+  border-color: var(--line);
+}
+.page-navigation button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
 }
 button:disabled {
   opacity: 0.45;
@@ -730,6 +942,38 @@ label.keyword {
 .keyword input {
   width: 100%;
 }
+.anchor-filter {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.anchor-filter input,
+.anchor-filter select {
+  width: 100%;
+  min-width: 0;
+}
+.active-filters,
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.filter-chip {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.chart-controls {
+  align-items: end;
+}
+.chart-controls > span {
+  font-size: 12px;
+  flex: 1 1 250px;
+}
 .charts-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -761,6 +1005,11 @@ label.keyword {
   min-height: 220px;
 }
 .month-column {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 0;
+  color: inherit;
   text-align: center;
   flex: 1;
   min-width: 45px;
@@ -844,14 +1093,93 @@ label.keyword {
   border-radius: 2px;
   flex-shrink: 0;
 }
-.legend li > span {
+.legend-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 5px;
+  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+  font-size: inherit;
+  text-align: left;
+}
+.legend-button:hover,
+.legend-button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.legend-button > span {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .legend strong {
   font-weight: 500;
+  white-space: nowrap;
+}
+.gift-panel {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.gift-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+.gift-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line);
+}
+.gift-summary[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+.gift-summary img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.gift-summary > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.gift-summary strong,
+.gift-summary small {
+  display: block;
+}
+.gift-summary strong {
+  font-size: 12px;
+}
+.gift-summary small {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.gift-summary b {
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.anchor-link {
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  text-align: left;
+}
+.anchor-link:hover {
+  text-decoration: underline;
 }
 .table-panel {
   padding: 20px;
@@ -1019,6 +1347,16 @@ td {
   }
   .anchor-chart {
     gap: 16px;
+    flex-wrap: wrap;
+  }
+  .legend {
+    min-width: 180px;
+  }
+  .gift-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .section-title {
+    flex-wrap: wrap;
   }
   .donut {
     width: 130px;
