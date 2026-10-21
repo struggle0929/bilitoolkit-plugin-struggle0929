@@ -4,7 +4,7 @@ import { ElOption, ElSelect } from 'element-plus'
 import type { ConsumptionRecord } from '../types/consumption'
 import AnchorQueries from './AnchorQueries.vue'
 import { parseAmount, recordsToCsv } from '../services/consumption-core'
-import { buildBlindOptions } from '../services/blind-options'
+import { buildBlindOptions, reconcileBlindRecords } from '../services/blind-options'
 import {
   collectBlindRecords,
   loadBagInventory,
@@ -111,6 +111,12 @@ function matches(row: { timestamp: number; anchorId: string; anchorName: string;
   )
 }
 const blindRecords = computed(() => (blind.value?.records || []).filter(matches))
+const blindComparison = computed(() => (blind.value ? reconcileBlindRecords(blind.value, props.records) : null))
+function rangeText(range: { start: number; end: number } | null) {
+  return range
+    ? `${dateFormatter.format(new Date(range.start * 1000))} — ${dateFormatter.format(new Date(range.end * 1000))}`
+    : '暂无记录'
+}
 const blindMeta = computed(() => new Map(blind.value?.config.gifts.map((gift) => [gift.id, gift]) || []))
 const blindStats = computed(() => {
   const gifts = new Map<string, { id: string; name: string; count: number; value: number; known: boolean }>()
@@ -524,7 +530,7 @@ onBeforeUnmount(() => {
                     ><strong>{{ item.name }}</strong
                     ><small>ID {{ item.id }}</small></span
                   >
-                  <span class="box-invested">投入 {{ fmt(item.investedCount) }} 个</span>
+                  <span class="box-invested">账单投入 {{ fmt(item.investedCount) }} 个</span>
                 </div>
               </ElOption>
               <template #footer
@@ -592,18 +598,37 @@ onBeforeUnmount(() => {
             >
           </div>
           <p v-if="blind.warning" class="warning">{{ blind.warning }}</p>
+          <div
+            v-if="blindComparison"
+            class="blind-comparison"
+            :class="{ 'has-gap': blindComparison.unreturnedQuantity > 0 }"
+          >
+            <p><strong>两类记录的查询范围（不受下方筛选影响）</strong></p>
+            <p>
+              消费账单：投入 {{ fmt(blindComparison.ledgerQuantity) }} 个 · {{ rangeText(blindComparison.ledgerRange) }}
+            </p>
+            <p>
+              开奖记录：已取得 {{ fmt(blindComparison.drawQuantity) }} 个 · {{ rangeText(blindComparison.drawRange) }}
+            </p>
+            <p v-if="blindComparison.unreturnedQuantity > 0" class="warning">
+              尚未取得其余
+              {{ fmt(blindComparison.unreturnedQuantity) }} 个对应的开奖结果，不能计算全部投入的礼物面值差额。
+              “已遍历”仅指当前开奖记录接口返回的页数，不表示覆盖全部消费历史。
+            </p>
+            <p v-else class="muted">两类接口范围可能不同；数量一致也不能单独证明每笔记录已对应。</p>
+          </div>
           <div class="stats">
             <div>
-              开盒礼物数量<strong>{{ fmt(blindStats.count) }}</strong>
+              当前筛选已取得开奖数量<strong>{{ fmt(blindStats.count) }}</strong>
             </div>
             <div>
-              按当前单价估算成本<strong>{{ blindStats.costKnown ? fmt(blindStats.cost) : '未知' }}</strong>
+              已取得开奖的估算成本<strong>{{ blindStats.costKnown ? fmt(blindStats.cost) : '未知' }}</strong>
             </div>
             <div>
-              已识别礼物面值<strong>{{ fmt(blindStats.value) }}</strong>
+              已取得开奖的礼物面值<strong>{{ fmt(blindStats.value) }}</strong>
             </div>
             <div>
-              面值差额<strong>{{
+              已取得开奖的面值差额<strong>{{
                 blindStats.unknown || !blindStats.costKnown ? '未完整识别' : fmt(blindStats.difference)
               }}</strong>
             </div>
@@ -611,7 +636,8 @@ onBeforeUnmount(() => {
           <p class="muted">
             单位：电池面值。按开出礼物数量 × 当前盲盒单价（{{
               blindStats.costKnown ? fmt(blind.config.price) : '未知'
-            }}）估算成本；历史价格、优惠和奖励可能不同，不等于人民币实付或可提现收益。{{
+            }}）估算成本；仅针对已取得且符合筛选的开奖结果，不包含未取得的历史开奖。
+            历史价格、优惠和奖励可能不同，不等于人民币实付或可提现收益。{{
               blindStats.unknown ? '另有 ' + blindStats.unknown + ' 个礼物未找到价格，未计入面值。' : ''
             }}
           </p>
@@ -842,6 +868,17 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.blind-comparison {
+  padding: 14px 16px;
+  margin-top: 14px;
+  border: 1px solid var(--line, var(--el-border-color));
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.blind-comparison.has-gap {
+  border-color: var(--el-color-warning);
+}
 .blind-box-field {
   width: min(340px, 100%);
 }

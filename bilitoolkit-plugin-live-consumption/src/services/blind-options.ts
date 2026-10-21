@@ -1,5 +1,5 @@
 import type { ConsumptionRecord } from '../types/consumption.js'
-import type { GiftInfo } from './extended-query.js'
+import type { BlindSnapshot, GiftInfo } from './extended-query.js'
 
 export interface BlindOption {
   id: string
@@ -59,4 +59,24 @@ export function buildBlindOptions(catalog: GiftInfo[], records: ConsumptionRecor
   return [...options.values()].sort(
     (a, b) => b.investedCount - a.investedCount || a.id.localeCompare(b.id, 'en', { numeric: true }),
   )
+}
+
+/** Compare both unfiltered sources without treating missing draws as zero-value prizes. */
+export function reconcileBlindRecords(snapshot: BlindSnapshot, records: ConsumptionRecord[]) {
+  const ledger = records.filter(
+    (record) => record.giftId === snapshot.boxId && !record.isBag && !record.isRefunded && record.paidBattery > 0,
+  )
+  const range = (rows: { timestamp: number }[]) => {
+    if (!rows.length) return null
+    return { start: Math.min(...rows.map((row) => row.timestamp)), end: Math.max(...rows.map((row) => row.timestamp)) }
+  }
+  const ledgerQuantity = ledger.reduce((sum, row) => sum + row.giftNum, 0)
+  const drawQuantity = snapshot.records.reduce((sum, row) => sum + row.giftNum, 0)
+  return {
+    ledgerQuantity,
+    drawQuantity,
+    unreturnedQuantity: Math.max(0, ledgerQuantity - drawQuantity),
+    ledgerRange: range(ledger),
+    drawRange: range(snapshot.records),
+  }
 }

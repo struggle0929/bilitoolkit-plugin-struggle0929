@@ -5,7 +5,9 @@ import ts from 'typescript'
 const code = ts.transpileModule(readFileSync(new URL('../src/services/blind-options.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText
-const { buildBlindOptions } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+const { buildBlindOptions, reconcileBlindRecords } = await import(
+  `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`
+)
 const record = (giftId, giftNum, extra = {}) => ({
   giftId,
   giftNum,
@@ -57,4 +59,27 @@ test('catalog options, removed boxes in history and a manually entered ID coexis
   assert.ok(options.some((item) => item.id === '123456789012345678'))
   assert.ok(!options.some((item) => item.id === '999'))
   assert.equal(new Set(options.map((item) => item.id)).size, options.length)
+})
+
+test('ledger totals and returned draws retain separate date ranges when older outcomes are unavailable', () => {
+  const older = Date.parse('2025-11-02T21:28:58+08:00') / 1000
+  const newer = Date.parse('2026-08-21T20:25:05+08:00') / 1000
+  const result = reconcileBlindRecords(
+    {
+      boxId: '32251',
+      records: [{ timestamp: newer, giftNum: 46 }],
+    },
+    [
+      record('32251', 135, { timestamp: older }),
+      record('32251', 46, { timestamp: newer }),
+      record('35206', 160, { timestamp: older }),
+      record('32251', 5, { timestamp: older, isRefunded: true }),
+    ],
+  )
+  assert.equal(result.ledgerQuantity, 181)
+  assert.equal(result.drawQuantity, 46)
+  assert.equal(result.unreturnedQuantity, 135)
+  assert.deepEqual(result.ledgerRange, { start: older, end: newer })
+  assert.deepEqual(result.drawRange, { start: newer, end: newer })
+  assert.equal(reconcileBlindRecords({ boxId: '32251', records: [] }, []).drawRange, null)
 })
