@@ -120,7 +120,7 @@ export async function loadGiftCatalog(signal?: AbortSignal, request = requestLiv
     name: String(gift.name ?? ''),
     image: String(gift.img_basic || gift.webp || gift.gif || ''),
     price: parseAmount(gift.price) / 100,
-    blind: /盲盒/.test(String(gift.name ?? '')),
+    blind: /盲盒/.test(String(gift.name ?? '')) || Number(gift.gift_type) === 6,
   }))
 }
 export async function loadBlindConfig(

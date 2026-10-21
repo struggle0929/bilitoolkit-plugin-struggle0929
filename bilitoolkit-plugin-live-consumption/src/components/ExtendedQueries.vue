@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { ElOption, ElSelect } from 'element-plus'
 import type { ConsumptionRecord } from '../types/consumption'
 import AnchorQueries from './AnchorQueries.vue'
 import { parseAmount, recordsToCsv } from '../services/consumption-core'
+import { buildBlindOptions } from '../services/blind-options'
 import {
   collectBlindRecords,
   loadBagInventory,
@@ -29,6 +31,11 @@ const tabs = [
   { id: 'anchor', name: '主播查询' },
 ] as const
 const catalog = shallowRef<GiftInfo[]>([])
+const catalogLoading = ref(false)
+const catalogLoaded = ref(false)
+const catalogError = ref('')
+const failedIcons = ref(new Set<string>())
+let catalogController: AbortController | null = null
 const blind = shallowRef<BlindSnapshot | null>(null)
 const bag = shallowRef<BagRecord[]>([])
 const bagUpdatedAt = ref('')
@@ -55,15 +62,37 @@ const dateFormatter = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shangha
 const timeText = (timestamp: number) =>
   new Date(timestamp * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
 const cacheKey = (uid: string, id: string) => `blind-records-${uid}-${id}`
-const boxOptions = computed(() => {
-  const map = new Map([
-    ['32251', '心动盲盒'],
-    ['35206', '幸运盲盒'],
-    ['35684', '活动盲盒（以接口配置为准）'],
-  ])
-  for (const gift of catalog.value) if (gift.blind) map.set(gift.id, gift.name)
-  return [...map].map(([id, name]) => ({ id, name }))
-})
+const boxOptions = computed(() => buildBlindOptions(catalog.value, props.records, boxId.value))
+const selectedBox = computed(() => boxOptions.value.find((item) => item.id === boxId.value))
+async function loadBoxOptions(force = false) {
+  if (catalogLoading.value || (!force && catalogLoaded.value) || !props.account) return
+  const uid = props.account.uid
+  const active = new AbortController()
+  catalogController = active
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const gifts = await loadGiftCatalog(active.signal)
+    if (props.account?.uid === uid && catalogController === active) {
+      catalog.value = gifts
+      catalogLoaded.value = true
+      failedIcons.value.clear()
+    }
+  } catch (cause) {
+    if (!active.signal.aborted && props.account?.uid === uid)
+      catalogError.value =
+        '礼物选项加载失败，可重新刷新；当前仍可选择历史及账单中已识别的盲盒。' +
+        (cause instanceof Error ? cause.message : '')
+  } finally {
+    if (catalogController === active) {
+      catalogLoading.value = false
+      catalogController = null
+    }
+  }
+}
+function handleBoxVisibility(visible: boolean) {
+  if (visible) void loadBoxOptions()
+}
 const selectedRecords = computed(() => (tab.value === 'blind' ? blind.value?.records || [] : props.records))
 const anchors = computed(() => {
   const map = new Map<string, string>()
@@ -283,10 +312,7 @@ async function queryBlind() {
   })
 }
 async function queryCatalog() {
-  await run('正在读取礼物配置', async (signal, uid) => {
-    const result = await loadGiftCatalog(signal)
-    if (props.account?.uid === uid) catalog.value = result
-  })
+  await loadBoxOptions(true)
 }
 async function queryBag() {
   await run('正在读取当前包裹', async (signal, uid) => {
@@ -398,6 +424,12 @@ watch(
   () => props.account?.uid,
   () => {
     stop()
+    catalogController?.abort()
+    catalogController = null
+    catalogLoading.value = false
+    catalogLoaded.value = false
+    catalogError.value = ''
+    catalog.value = []
     controller = null
     busy.value = ''
     bag.value = []
@@ -420,6 +452,7 @@ watch([tab, anchorId, startDate, endDate, keyword, rewardType, materialNames, pr
 watch([busy, anchorBusy], ([value, childBusy]) => emit('busy', !!value || childBusy))
 onBeforeUnmount(() => {
   stop()
+  catalogController?.abort()
   emit('busy', false)
 })
 </script>
@@ -450,15 +483,60 @@ onBeforeUnmount(() => {
     <template v-else>
       <div class="toolbar">
         <template v-if="tab === 'blind'">
-          <label
-            >盲盒礼物 ID<input v-model.trim="boxId" list="blind-box-options" :disabled="!!busy" inputmode="numeric"
-          /></label>
-          <datalist id="blind-box-options">
-            <option v-for="item in boxOptions" :key="item.id" :value="item.id">{{ item.name }}</option>
-          </datalist>
+          <label class="blind-box-field" for="blind-box-select"
+            >盲盒礼物 ID
+            <ElSelect
+              id="blind-box-select"
+              v-model="boxId"
+              class="blind-box-select"
+              filterable
+              allow-create
+              default-first-option
+              :disabled="!!busy"
+              :loading="catalogLoading"
+              placeholder="搜索盲盒名称或输入 ID"
+              popper-class="blind-box-menu"
+              :popper-style="{ width: 'min(440px, calc(100vw - 32px))' }"
+              @visible-change="handleBoxVisibility"
+            >
+              <template #label>
+                <span class="selected-box">
+                  <img
+                    v-if="selectedBox?.image && !failedIcons.has(selectedBox.id)"
+                    :src="selectedBox.image"
+                    alt=""
+                    @error="failedIcons.add(selectedBox!.id)"
+                  />
+                  <span>{{ selectedBox?.name || '盲盒' }} · {{ boxId }}</span>
+                </span>
+              </template>
+              <ElOption v-for="item in boxOptions" :key="item.id" :value="item.id" :label="item.name + ' · ' + item.id">
+                <div class="blind-box-option">
+                  <img
+                    v-if="item.image && !failedIcons.has(item.id)"
+                    :src="item.image"
+                    alt=""
+                    loading="lazy"
+                    @error="failedIcons.add(item.id)"
+                  />
+                  <span v-else class="box-icon-fallback" aria-hidden="true">🎁</span>
+                  <span class="box-description"
+                    ><strong>{{ item.name }}</strong
+                    ><small>ID {{ item.id }}</small></span
+                  >
+                  <span class="box-invested">投入 {{ fmt(item.investedCount) }} 个</span>
+                </div>
+              </ElOption>
+              <template #footer
+                ><span class="box-menu-note">按已查账单中的付费投入数量降序；不计包裹和已退回记录。</span></template
+              >
+            </ElSelect>
+          </label>
           <button :disabled="!!busy" @click="queryBlind">查询盲盒记录</button>
-          <button class="secondary" :disabled="!!busy" @click="queryCatalog">刷新礼物选项</button>
-          <span class="muted">可输入已下架盲盒 ID；是否可查以接口返回为准。</span>
+          <button class="secondary" :disabled="!!busy || catalogLoading" @click="queryCatalog">
+            {{ catalogLoading ? '正在加载选项…' : '刷新礼物选项' }}
+          </button>
+          <span class="muted">可搜索名称或输入已下架盲盒 ID，按回车选择；是否可查以接口返回为准。</span>
         </template>
         <template v-else-if="tab === 'bag'">
           <button :disabled="!!busy" @click="queryBag">查询当前包裹</button
@@ -477,6 +555,7 @@ onBeforeUnmount(() => {
         {{ busy }}<span v-if="busy.includes('盲盒')"> · {{ progress.pages }} 页 / {{ progress.records }} 条</span>
       </p>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
+      <p v-if="catalogError" class="warning" role="alert">{{ catalogError }}</p>
       <p v-if="message" class="notice">{{ message }}</p>
       <p v-if="rewardCatalog?.warnings.length && (tab === 'synthesis' || tab === 'rewards')" class="warning">
         {{ rewardCatalog.warnings.join('；') }}。分类可能不完整。
@@ -502,9 +581,7 @@ onBeforeUnmount(() => {
             <option value="red">红包礼物</option>
           </select></label
         >
-        <button class="secondary" @click="resetViewFilters">
-          重置筛选
-        </button>
+        <button class="secondary" @click="resetViewFilters">重置筛选</button>
       </div>
       <template v-if="tab === 'blind'">
         <div v-if="blind" class="panel">
@@ -765,6 +842,77 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.blind-box-field {
+  width: min(340px, 100%);
+}
+.blind-box-select {
+  width: 100%;
+}
+.selected-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.selected-box img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.selected-box > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.blind-box-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 64px;
+  color: var(--el-text-color-primary);
+}
+.blind-box-option > img,
+.box-icon-fallback {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.box-icon-fallback {
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+}
+.box-description {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+.box-description strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.box-description small {
+  color: var(--el-text-color-secondary);
+}
+.box-invested {
+  color: var(--el-color-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.box-menu-note {
+  display: block;
+  white-space: normal;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+:global(.blind-box-menu .el-select-dropdown__item) {
+  height: 64px;
+  padding: 0 14px;
+}
 .extended-queries {
   margin-top: 24px;
   color: var(--ink, var(--el-text-color-primary));
