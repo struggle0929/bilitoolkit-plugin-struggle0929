@@ -6,24 +6,26 @@ import AnchorQueries from './AnchorQueries.vue'
 import { parseAmount, recordsToCsv } from '../services/consumption-core'
 import { buildBlindOptions, reconcileBlindRecords } from '../services/blind-options'
 import { buildSynthesisOptions, withinSynthesisWindow, type SynthesisOption } from '../services/synthesis-options'
-import { synthesisActivities } from '../data/synthesis-activities'
+import type { SelectionMetadata } from '../services/selection-metadata'
+import { summarizeBlindDistribution } from '../services/blind-distribution'
 import {
   collectBlindRecords,
   loadBagInventory,
   loadBlindConfig,
-  loadGiftCatalog,
   loadRewardCatalog,
   type BagRecord,
   type BlindRecord,
   type BlindSnapshot,
-  type GiftInfo,
 } from '../services/extended-query'
 
 const props = defineProps<{
   account: { uid: string; name: string; face: string } | null
   records: ConsumptionRecord[]
+  selectionMetadata: SelectionMetadata
+  optionsBusy: boolean
+  optionsWarning: string
 }>()
-const emit = defineEmits<{ busy: [value: boolean]; 'select-account': [] }>()
+const emit = defineEmits<{ busy: [value: boolean]; 'select-account': []; 'refresh-options': [] }>()
 const tab = ref<'blind' | 'synthesis' | 'rewards' | 'bag' | 'anchor'>('blind')
 const tabs = [
   { id: 'blind', name: '盲盒记录' },
@@ -32,12 +34,10 @@ const tabs = [
   { id: 'bag', name: '当前包裹' },
   { id: 'anchor', name: '主播查询' },
 ] as const
-const catalog = shallowRef<GiftInfo[]>([])
-const catalogLoading = ref(false)
-const catalogLoaded = ref(false)
-const catalogError = ref('')
+const catalog = computed(() => props.selectionMetadata.gifts)
+const catalogLoading = computed(() => props.optionsBusy)
+const catalogError = computed(() => props.optionsWarning)
 const failedIcons = ref(new Set<string>())
-let catalogController: AbortController | null = null
 const blind = shallowRef<BlindSnapshot | null>(null)
 const bag = shallowRef<BagRecord[]>([])
 const bagUpdatedAt = ref('')
@@ -67,7 +67,9 @@ const timeText = (timestamp: number) =>
 const cacheKey = (uid: string, id: string) => `blind-records-${uid}-${id}`
 const boxOptions = computed(() => buildBlindOptions(catalog.value, props.records, boxId.value))
 const selectedBox = computed(() => boxOptions.value.find((item) => item.id === boxId.value))
-const synthesisOptions = computed(() => buildSynthesisOptions(synthesisActivities, props.records, catalog.value))
+const synthesisOptions = computed(() =>
+  buildSynthesisOptions(props.selectionMetadata.activities, props.records, catalog.value),
+)
 const selectedActivity = computed(() => synthesisOptions.value.find((item) => item.id === selectedActivityId.value))
 function activityDateText(activity: SynthesisOption) {
   if (activity.sortTimestamp === undefined) return '日期未知'
@@ -76,37 +78,16 @@ function activityDateText(activity: SynthesisOption) {
 }
 function chooseActivity(id: string) {
   selectedActivityId.value = id
-  const activity = synthesisActivities.find((item) => item.id === id)
+  const activity = props.selectionMetadata.activities.find((item) => item.id === id)
   activityName.value = activity?.name || '自定义活动'
   materialNames.value = activity?.materials.join('\n') || ''
   productNames.value = activity?.products.join('\n') || ''
   page.value = 1
 }
-async function loadBoxOptions(force = false) {
-  if (catalogLoading.value || (!force && catalogLoaded.value) || !props.account) return
-  const uid = props.account.uid
-  const active = new AbortController()
-  catalogController = active
-  catalogLoading.value = true
-  catalogError.value = ''
-  try {
-    const gifts = await loadGiftCatalog(active.signal)
-    if (props.account?.uid === uid && catalogController === active) {
-      catalog.value = gifts
-      catalogLoaded.value = true
-      failedIcons.value.clear()
-    }
-  } catch (cause) {
-    if (!active.signal.aborted && props.account?.uid === uid)
-      catalogError.value =
-        '礼物选项加载失败，可重新刷新；当前仍可选择历史及账单中已识别的盲盒。' +
-        (cause instanceof Error ? cause.message : '')
-  } finally {
-    if (catalogController === active) {
-      catalogLoading.value = false
-      catalogController = null
-    }
-  }
+function loadBoxOptions(force = false) {
+  if (catalogLoading.value || !props.account) return
+  if (force || !props.selectionMetadata.catalogUpdatedAt || !props.selectionMetadata.activitiesUpdatedAt)
+    emit('refresh-options')
 }
 function handleBoxVisibility(visible: boolean) {
   if (visible) void loadBoxOptions()
@@ -163,6 +144,17 @@ const blindStats = computed(() => {
   }
 })
 const blindRows = computed(() => blindRecords.value.slice((page.value - 1) * 50, page.value * 50))
+const blindDistribution = computed(() => summarizeBlindDistribution(blindRecords.value))
+const blindPieStyle = computed(() => {
+  let offset = 0
+  const segments = blindDistribution.value.gifts.map((gift) => {
+    const start = offset
+    offset += gift.percentage
+    return `${gift.color} ${start}% ${offset}%`
+  })
+  return { background: segments.length ? `conic-gradient(${segments.join(',')})` : 'var(--line)' }
+})
+const percentageText = (value: number) => (value > 0 && value < 0.1 ? '<0.1%' : `${Number(value.toFixed(1))}%`)
 const blindPages = computed(() => Math.max(1, Math.ceil(blindRecords.value.length / 50)))
 const filteredPayRecords = computed(() => props.records.filter(matches))
 const rewardIds = computed(
@@ -462,12 +454,6 @@ watch(
   () => props.account?.uid,
   () => {
     stop()
-    catalogController?.abort()
-    catalogController = null
-    catalogLoading.value = false
-    catalogLoaded.value = false
-    catalogError.value = ''
-    catalog.value = []
     controller = null
     busy.value = ''
     bag.value = []
@@ -488,9 +474,22 @@ watch([tab, anchorId, startDate, endDate, keyword, rewardType, materialNames, pr
   page.value = 1
 })
 watch([busy, anchorBusy], ([value, childBusy]) => emit('busy', !!value || childBusy))
+watch(
+  () => props.selectionMetadata.activities,
+  (activities, previous) => {
+    const old = previous.find((item) => item.id === selectedActivityId.value)
+    if (
+      old &&
+      activityName.value === old.name &&
+      materialNames.value === old.materials.join('\n') &&
+      productNames.value === old.products.join('\n') &&
+      activities.some((item) => item.id === old.id)
+    )
+      chooseActivity(old.id)
+  },
+)
 onBeforeUnmount(() => {
   stop()
-  catalogController?.abort()
   emit('busy', false)
 })
 </script>
@@ -501,6 +500,23 @@ onBeforeUnmount(() => {
       <div>
         <h2>更多账单查询</h2>
         <p>盲盒开奖记录与消费流水分别读取；合成和奖励按已取得的数据分析。</p>
+        <p class="muted">
+          礼物目录：{{
+            selectionMetadata.catalogUpdatedAt
+              ? new Date(selectionMetadata.catalogUpdatedAt).toLocaleString('zh-CN', {
+                  timeZone: 'Asia/Shanghai',
+                  hour12: false,
+                })
+              : '尚未同步'
+          }}； 活动规则：{{
+            selectionMetadata.activitiesUpdatedAt
+              ? new Date(selectionMetadata.activitiesUpdatedAt).toLocaleString('zh-CN', {
+                  timeZone: 'Asia/Shanghai',
+                  hour12: false,
+                })
+              : '使用内置规则'
+          }}。 消费查询时自动刷新；活动规则来自 B瓜公开配置，更新可能滞后于 B 站。
+        </p>
       </div>
     </div>
     <nav class="tabs" aria-label="更多查询页面">
@@ -585,7 +601,9 @@ onBeforeUnmount(() => {
           <button v-if="tab === 'synthesis'" class="secondary" :disabled="!!busy" @click="queryBag">
             读取当前包裹
           </button>
-          <button class="secondary" :disabled="!!busy" @click="queryCatalog">读取礼物面值配置</button>
+          <button class="secondary" :disabled="!!busy || catalogLoading" @click="queryCatalog">
+            刷新活动与礼物选项
+          </button>
         </template>
         <button v-if="busy" class="secondary" @click="stop">停止查询</button>
       </div>
@@ -673,6 +691,38 @@ onBeforeUnmount(() => {
               blindStats.unknown ? '另有 ' + blindStats.unknown + ' 个礼物未找到价格，未计入面值。' : ''
             }}
           </p>
+          <section class="blind-distribution" aria-label="已取得开奖的礼物数量统计">
+            <div class="section-heading">
+              <h3>开出礼物分布</h3>
+              <span class="muted">按礼物数量统计 · 当前筛选范围</span>
+            </div>
+            <div v-if="blindDistribution.total" class="blind-distribution-content">
+              <div
+                class="blind-donut"
+                :style="blindPieStyle"
+                role="img"
+                :aria-label="'开出礼物数量占比，共 ' + blindDistribution.total + ' 个'"
+              >
+                <div>
+                  <strong>{{ fmt(blindDistribution.total) }}</strong
+                  ><span>个礼物</span>
+                </div>
+              </div>
+              <ul class="blind-gift-counts">
+                <li v-for="gift in blindDistribution.gifts" :key="gift.id">
+                  <i :style="{ background: gift.color }" aria-hidden="true" />
+                  <img v-if="gift.image" :src="gift.image" alt="" loading="lazy" />
+                  <span class="blind-gift-label">{{ gift.name }}</span>
+                  <strong>{{ fmt(gift.count) }} 个</strong
+                  ><span class="blind-gift-percentage">{{ percentageText(gift.percentage) }}</span>
+                </li>
+              </ul>
+            </div>
+            <p v-else class="empty">当前筛选没有已取得的开奖礼物。</p>
+            <p class="muted">
+              这是已查到结果的实际数量占比，随日期、主播和搜索筛选变化，不是配置概率；未取得的历史开奖不参与统计。
+            </p>
+          </section>
           <details>
             <summary>查看礼物配置、概率与当前筛选结果</summary>
             <div class="table-scroll">
@@ -967,6 +1017,84 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.blind-distribution {
+  margin: 24px 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.blind-distribution-content {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin: 22px 0;
+  flex-wrap: wrap;
+}
+.blind-donut {
+  width: 190px;
+  height: 190px;
+  border-radius: 50%;
+  padding: 32px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.blind-donut > div {
+  height: 100%;
+  border-radius: 50%;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+.blind-donut strong {
+  font-size: 28px;
+}
+.blind-donut span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.blind-gift-counts {
+  flex: 1;
+  min-width: min(280px, 100%);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.blind-gift-counts li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+  font-size: 13px;
+}
+.blind-gift-counts i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.blind-gift-counts img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.blind-gift-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.blind-gift-counts strong {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.blind-gift-percentage {
+  width: 60px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 .blind-comparison {
   padding: 14px 16px;
   margin-top: 14px;

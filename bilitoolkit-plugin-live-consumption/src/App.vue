@@ -4,6 +4,12 @@ import type { CollectionSnapshot } from './types/consumption'
 import { collectConsumption } from './services/consumption-api'
 import { recordsToCsv, summarizeRecords } from './services/consumption-core'
 import ExtendedQueries from './components/ExtendedQueries.vue'
+import {
+  initialSelectionMetadata,
+  restoreSelectionMetadata,
+  refreshSelectionMetadata,
+  type SelectionMetadata,
+} from './services/selection-metadata'
 
 type Account = { uid: string; name: string; face: string }
 const account = ref<Account | null>(null)
@@ -12,6 +18,60 @@ const busy = ref(false)
 const switching = ref(false)
 const error = ref('')
 const notice = ref('')
+const selectionMetadata = shallowRef(initialSelectionMetadata())
+const optionsBusy = ref(false)
+const optionsWarning = ref('')
+const metadataKey = 'selection-metadata-v1'
+let metadataCachePromise: Promise<void> | undefined
+let metadataRefreshPromise: Promise<void> | undefined
+let metadataController: AbortController | null = null
+function restoreOptionCache() {
+  return (metadataCachePromise ??= (async () => {
+    if (typeof window.toolkitApi === 'undefined') return
+    try {
+      selectionMetadata.value = restoreSelectionMetadata(
+        await window.toolkitApi.db.init<SelectionMetadata>(metadataKey),
+      )
+    } catch {
+      /* Built-in activity rules remain usable without a metadata cache. */
+    }
+  })())
+}
+function refreshOptions(signal?: AbortSignal): Promise<void> {
+  if (metadataRefreshPromise) return metadataRefreshPromise
+  const active = new AbortController()
+  metadataController = active
+  const abort = () => active.abort()
+  if (signal?.aborted) abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  optionsBusy.value = true
+  optionsWarning.value = ''
+  metadataRefreshPromise = (async () => {
+    try {
+      await restoreOptionCache()
+      if (active.signal.aborted) return
+      const result = await refreshSelectionMetadata(selectionMetadata.value, { signal: active.signal })
+      if (active.signal.aborted) return
+      selectionMetadata.value = result.metadata
+      optionsWarning.value = result.warnings.join('；')
+      try {
+        await window.toolkitApi.db.write(metadataKey, result.metadata)
+      } catch {
+        optionsWarning.value = [optionsWarning.value, '选项已更新，但本地缓存保存失败'].filter(Boolean).join('；')
+      }
+    } catch {
+      if (!active.signal.aborted) optionsWarning.value = '选项刷新失败，继续使用已有选项；消费账单查询不受影响。'
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      if (metadataController === active) {
+        metadataController = null
+        metadataRefreshPromise = undefined
+        optionsBusy.value = false
+      }
+    }
+  })()
+  return metadataRefreshPromise
+}
 const progress = ref({ pages: 0, records: 0 })
 const keyword = ref('')
 const startDate = ref('')
@@ -232,6 +292,7 @@ async function query(mode: 'full' | 'incremental') {
   error.value = ''
   notice.value = ''
   progress.value = { pages: 0, records: 0 }
+  const optionRefresh = refreshOptions(controller.signal)
   try {
     const result = await collectConsumption({
       uid,
@@ -257,6 +318,7 @@ async function query(mode: 'full' | 'incremental') {
   } catch (cause) {
     if (account.value?.uid === uid) error.value = cause instanceof Error ? cause.message : '查询失败'
   } finally {
+    await optionRefresh
     if (activeController === controller) {
       activeController = null
       busy.value = false
@@ -296,6 +358,7 @@ async function exportData(format: 'csv' | 'json') {
 }
 onMounted(async () => {
   if (!hostAvailable) return
+  void restoreOptionCache()
   unsubscribeLogout = await window.toolkitApi.event.onUserLogout((user) => {
     if (String(user.mid) === account.value?.uid) {
       cancel()
@@ -338,6 +401,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   cancel()
+  metadataController?.abort()
   unsubscribeLogout?.()
 })
 </script>
@@ -373,12 +437,20 @@ onBeforeUnmount(() => {
     </div>
     <div v-if="error" class="message error" role="alert">{{ error }}</div>
     <div v-if="notice" class="message" role="status">{{ notice }}</div>
+    <div v-if="optionsBusy" class="message" role="status">正在同步盲盒目录和合成活动规则…</div>
+    <div v-if="optionsWarning && mainPage === 'consumption'" class="message warning" role="status">
+      {{ optionsWarning }}
+    </div>
     <ExtendedQueries
       v-if="mainPage === 'extended'"
       :account="account"
       :records="allRecords"
+      :selection-metadata="selectionMetadata"
+      :options-busy="optionsBusy"
+      :options-warning="optionsWarning"
       @select-account="selectAccount"
       @busy="extendedBusy = $event"
+      @refresh-options="refreshOptions()"
     />
     <div v-show="mainPage === 'consumption'">
       <section class="query-panel panel">
