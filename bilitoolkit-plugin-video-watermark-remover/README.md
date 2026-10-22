@@ -2,6 +2,8 @@
 
 为哔哩工具姬提供本地视频固定区域去水印功能。
 
+[插件更新建议Bilibili：新手struggle](https://space.bilibili.com/514536602)
+
 ## 功能
 
 - 批量选择本地视频

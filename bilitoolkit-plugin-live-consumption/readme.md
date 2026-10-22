@@ -2,6 +2,8 @@
 
 BiliToolkit UI 插件。通过主程序选择并授权本人已登录的哔哩哔哩账号，直接查询本人直播消费记录，整理电池支出、退款、主播分布和消费明细。
 
+[插件更新建议Bilibili：新手struggle](https://space.bilibili.com/514536602)
+
 ## 功能
 
 - 按接口游标自动翻页获取当前可查的消费记录，支持更新最新记录、完整重查和中途停止。
@@ -56,4 +58,4 @@ pnpm build
 
 在哔哩工具姬中以本地测试插件加载此目录的构建结果。开发服务使用端口 5176，启动命令为 `pnpm dev`。
 
-独立包名：`bilitoolkit-plugin-live-consumption`。当前源码为 0.2.0，本次仅更新源码和本地构建，尚未发布 npm。
+独立包名：`bilitoolkit-plugin-live-consumption`。当前版本为 0.2.0，可通过哔哩工具姬插件市场安装和更新。

@@ -2,6 +2,8 @@
 
 BiliToolkit UI 插件。选择输入直播间房间号或用户 UID，查询 Danmakus 第三方服务已经收录的直播弹幕记录，并在本地保存最近 20 个查询对象。沿用原 npm 包名 `bilitoolkit-plugin-user-danmaku-search`，已有用户可直接升级。
 
+[插件更新建议Bilibili：新手struggle](https://space.bilibili.com/514536602)
+
 ## 功能
 
 - 按房间号（包括短号）解析主播，按时间倒序浏览直播间已收录场次及每场所有已收录弹幕
