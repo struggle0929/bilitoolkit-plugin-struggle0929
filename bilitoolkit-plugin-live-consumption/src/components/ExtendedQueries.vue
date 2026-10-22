@@ -5,6 +5,8 @@ import type { ConsumptionRecord } from '../types/consumption'
 import AnchorQueries from './AnchorQueries.vue'
 import { parseAmount, recordsToCsv } from '../services/consumption-core'
 import { buildBlindOptions, reconcileBlindRecords } from '../services/blind-options'
+import { buildSynthesisOptions, withinSynthesisWindow, type SynthesisOption } from '../services/synthesis-options'
+import { synthesisActivities } from '../data/synthesis-activities'
 import {
   collectBlindRecords,
   loadBagInventory,
@@ -52,6 +54,7 @@ const endDate = ref('')
 const keyword = ref('')
 const page = ref(1)
 const activityName = ref('玲珑宝斋')
+const selectedActivityId = ref('玲珑宝斋')
 const materialNames = ref('玲珑宝斋-锦囊\n玲珑宝斋-瓷瓶\n玲珑宝斋-银盒\n玲珑宝斋-云锦\n玲珑宝斋-玉函')
 const productNames = ref('相识玉扣\n常伴珠钗\n缘起瓷瓶\n倾心宝冠\n万象天衣')
 const rewardType = ref('all')
@@ -64,6 +67,21 @@ const timeText = (timestamp: number) =>
 const cacheKey = (uid: string, id: string) => `blind-records-${uid}-${id}`
 const boxOptions = computed(() => buildBlindOptions(catalog.value, props.records, boxId.value))
 const selectedBox = computed(() => boxOptions.value.find((item) => item.id === boxId.value))
+const synthesisOptions = computed(() => buildSynthesisOptions(synthesisActivities, props.records, catalog.value))
+const selectedActivity = computed(() => synthesisOptions.value.find((item) => item.id === selectedActivityId.value))
+function activityDateText(activity: SynthesisOption) {
+  if (activity.sortTimestamp === undefined) return '日期未知'
+  const date = dateFormatter.format(new Date(activity.sortTimestamp * 1000))
+  return (activity.dateSource === 'record' ? '最近记录 ' : '配置日期 ') + date
+}
+function chooseActivity(id: string) {
+  selectedActivityId.value = id
+  const activity = synthesisActivities.find((item) => item.id === id)
+  activityName.value = activity?.name || '自定义活动'
+  materialNames.value = activity?.materials.join('\n') || ''
+  productNames.value = activity?.products.join('\n') || ''
+  page.value = 1
+}
 async function loadBoxOptions(force = false) {
   if (catalogLoading.value || (!force && catalogLoaded.value) || !props.account) return
   const uid = props.account.uid
@@ -210,6 +228,8 @@ const synthesisRows = computed(() =>
   filteredPayRecords.value.filter(
     (row) =>
       !row.isRefunded &&
+      (!selectedActivity.value ||
+        withinSynthesisWindow(row, { ...selectedActivity.value, products: products.value })) &&
       ((!row.isBag && row.netBattery > 0 && materials.value.some((name) => row.giftName.includes(name))) ||
         (row.isBag && !rewardIds.value.has(row.giftId) && products.value.some((name) => row.giftName.includes(name)))),
   ),
@@ -412,6 +432,18 @@ async function exportData(format: 'csv' | 'json') {
                 filters,
                 classification: tab.value,
                 inferred: tab.value === 'synthesis',
+                ...(tab.value === 'synthesis'
+                  ? {
+                      activity: {
+                        id: selectedActivityId.value,
+                        name: activityName.value,
+                        materials: materials.value,
+                        products: products.value,
+                        startTime: selectedActivity.value?.startTime,
+                        endTime: selectedActivity.value?.endTime,
+                      },
+                    }
+                  : {}),
               },
               null,
               2,
@@ -717,10 +749,77 @@ onBeforeUnmount(() => {
             合成页面依据礼物名称、时间筛选和包裹数据推算，接口未提供“此礼物由哪次合成获得”的完整关联，不能当作官方合成流水。未读取奖励分类时，可能混入天选或红包所得。
           </p>
           <div class="rules">
-            <label>活动名称<input v-model="activityName" /></label
-            ><label>材料名称（每行一个）<textarea v-model="materialNames" rows="5" /></label
-            ><label>产物名称（每行一个）<textarea v-model="productNames" rows="5" /></label>
+            <label class="synthesis-activity-field" for="synthesis-activity-select"
+              >选择合成活动
+              <ElSelect
+                id="synthesis-activity-select"
+                v-model="selectedActivityId"
+                filterable
+                :disabled="!!busy"
+                :loading="catalogLoading"
+                popper-class="synthesis-activity-menu"
+                :popper-style="{ width: 'min(480px, calc(100vw - 32px))' }"
+                @change="chooseActivity"
+                @visible-change="handleBoxVisibility"
+              >
+                <template #label>
+                  <span class="selected-box">
+                    <img
+                      v-if="selectedActivity?.image && !failedIcons.has('activity:' + selectedActivityId)"
+                      :src="selectedActivity.image"
+                      alt=""
+                      @error="failedIcons.add('activity:' + selectedActivityId)"
+                    />
+                    <span>{{ selectedActivity?.name || '自定义规则' }}</span>
+                  </span>
+                </template>
+                <ElOption
+                  v-for="activity in synthesisOptions"
+                  :key="activity.id"
+                  :value="activity.id"
+                  :label="activity.name"
+                >
+                  <div class="blind-box-option">
+                    <img
+                      v-if="activity.image && !failedIcons.has('activity:' + activity.id)"
+                      :src="activity.image"
+                      alt=""
+                      loading="lazy"
+                      @error="failedIcons.add('activity:' + activity.id)"
+                    />
+                    <span v-else class="box-icon-fallback" aria-hidden="true">🎁</span>
+                    <span class="box-description"
+                      ><strong>{{ activity.name }}</strong
+                      ><small
+                        >{{ activity.materials.length }} 类材料 · {{ activity.products.length }} 类产物</small
+                      ></span
+                    >
+                    <span class="activity-date">{{ activityDateText(activity) }}</span>
+                  </div>
+                </ElOption>
+                <ElOption value="custom" label="自定义规则" />
+                <template #footer
+                  ><span class="box-menu-note"
+                    >按最近匹配记录日期降序；无记录时使用配置日期，日期未知的活动置后。可选历史活动。</span
+                  ></template
+                >
+              </ElSelect>
+            </label>
+            <span v-if="selectedActivity" class="muted">{{ activityDateText(selectedActivity) }}</span>
           </div>
+          <p v-if="selectedActivity?.startTime || selectedActivity?.endTime" class="muted">
+            配置活动时间：{{ selectedActivity.startTime ? timeText(selectedActivity.startTime) : '未提供' }} —
+            {{ selectedActivity.endTime ? timeText(selectedActivity.endTime) : '未提供' }}。
+            材料按活动时间匹配；产物允许结束后 49 小时送出，上方日期可进一步筛选。
+          </p>
+          <details :open="selectedActivityId === 'custom'">
+            <summary>查看或调整活动匹配规则</summary>
+            <div class="rules">
+              <label>活动名称<input v-model="activityName" /></label>
+              <label>材料名称（每行一个）<textarea v-model="materialNames" rows="5" /></label>
+              <label>产物名称（每行一个）<textarea v-model="productNames" rows="5" /></label>
+            </div>
+          </details>
           <div class="stats">
             <div>
               匹配材料净支出<strong>{{ fmt(synthesisStats.cost) }}</strong>
@@ -882,6 +981,13 @@ onBeforeUnmount(() => {
 .blind-box-field {
   width: min(340px, 100%);
 }
+.synthesis-activity-field {
+  width: min(360px, 100%);
+}
+.activity-date {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
 .blind-box-select {
   width: 100%;
 }
@@ -947,6 +1053,10 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
 }
 :global(.blind-box-menu .el-select-dropdown__item) {
+  height: 64px;
+  padding: 0 14px;
+}
+:global(.synthesis-activity-menu .el-select-dropdown__item) {
   height: 64px;
   padding: 0 14px;
 }
